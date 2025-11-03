@@ -27,6 +27,10 @@ export default function RootLayout() {
       <Stack.Screen name="splash" />
       <Stack.Screen name="login" />
       <Stack.Screen name="profile-creation" />
+      <Stack.Screen name="home" />
+      <Stack.Screen name="host-profile" />
+      <Stack.Screen name="calling" />
+      <Stack.Screen name="wallet" />
     </Stack>
   );
 }

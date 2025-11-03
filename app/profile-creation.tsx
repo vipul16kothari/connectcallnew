@@ -9,6 +9,7 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
+import { useRouter } from 'expo-router';
 import { Colors } from '@/constants/Colors';
 import { FontSizes } from '@/constants/Fonts';
 
@@ -29,6 +30,7 @@ const LANGUAGES = [
 ];
 
 export default function ProfileCreationScreen() {
+  const router = useRouter();
   const [name, setName] = useState('');
   const [selectedGender, setSelectedGender] = useState<string | null>(null);
   const [selectedLanguages, setSelectedLanguages] = useState<string[]>([]);
@@ -48,7 +50,7 @@ export default function ProfileCreationScreen() {
         gender: selectedGender,
         languages: selectedLanguages,
       });
-      // Navigation to home screen will be implemented in next phase
+      router.replace('/home');
     }
   };
 

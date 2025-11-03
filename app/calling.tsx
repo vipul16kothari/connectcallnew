@@ -86,7 +86,7 @@ export default function CallingScreen() {
         {
           text: 'End Call',
           style: 'destructive',
-          onPress: () => router.replace('/home'),
+          onPress: () => router.replace('/(tabs)'),
         },
       ]
     );

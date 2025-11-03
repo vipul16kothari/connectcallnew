@@ -1,4 +1,4 @@
-import { Host, CoinPackage } from '@/types/host';
+import { Host, CoinPackage, CallHistory, Transaction } from '@/types/host';
 
 export const MOCK_HOSTS: Host[] = [
   {
@@ -94,3 +94,106 @@ export const COIN_PACKAGES: CoinPackage[] = [
 ];
 
 export const INITIAL_WALLET_BALANCE = 50;
+
+export const MOCK_CALL_HISTORY: CallHistory[] = [
+  {
+    id: '1',
+    hostId: '1',
+    hostName: 'Sarah Chen',
+    hostProfilePicture: 'https://i.pravatar.cc/300?img=1',
+    callType: 'video',
+    direction: 'outgoing',
+    timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(), // 2 hours ago
+    duration: 1800, // 30 minutes
+    isHostOnline: true,
+  },
+  {
+    id: '2',
+    hostId: '3',
+    hostName: 'Emma Williams',
+    hostProfilePicture: 'https://i.pravatar.cc/300?img=5',
+    callType: 'audio',
+    direction: 'outgoing',
+    timestamp: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString(), // 5 hours ago
+    duration: 900, // 15 minutes
+    isHostOnline: false,
+  },
+  {
+    id: '3',
+    hostId: '2',
+    hostName: 'Marco Rossi',
+    hostProfilePicture: 'https://i.pravatar.cc/300?img=12',
+    callType: 'video',
+    direction: 'outgoing',
+    timestamp: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(), // 1 day ago
+    duration: 2400, // 40 minutes
+    isHostOnline: true,
+  },
+  {
+    id: '4',
+    hostId: '4',
+    hostName: 'Yuki Tanaka',
+    hostProfilePicture: 'https://i.pravatar.cc/300?img=47',
+    callType: 'audio',
+    direction: 'outgoing',
+    timestamp: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(), // 2 days ago
+    duration: 600, // 10 minutes
+    isHostOnline: true,
+  },
+  {
+    id: '5',
+    hostId: '5',
+    hostName: 'Ahmed Hassan',
+    hostProfilePicture: 'https://i.pravatar.cc/300?img=33',
+    callType: 'video',
+    direction: 'outgoing',
+    timestamp: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(), // 3 days ago
+    duration: 1200, // 20 minutes
+    isHostOnline: false,
+  },
+];
+
+export const MOCK_TRANSACTIONS: Transaction[] = [
+  {
+    id: '1',
+    type: 'purchase',
+    amount: 500,
+    description: '500 Coins Purchase',
+    timestamp: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
+  },
+  {
+    id: '2',
+    type: 'call',
+    amount: -30,
+    description: 'Video Call with Sarah Chen',
+    timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+  },
+  {
+    id: '3',
+    type: 'call',
+    amount: -15,
+    description: 'Audio Call with Emma Williams',
+    timestamp: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString(),
+  },
+  {
+    id: '4',
+    type: 'purchase',
+    amount: 100,
+    description: '100 Coins Purchase',
+    timestamp: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+  },
+  {
+    id: '5',
+    type: 'call',
+    amount: -48,
+    description: 'Video Call with Marco Rossi',
+    timestamp: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+  },
+  {
+    id: '6',
+    type: 'call',
+    amount: -8,
+    description: 'Audio Call with Yuki Tanaka',
+    timestamp: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+  },
+];

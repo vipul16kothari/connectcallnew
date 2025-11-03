@@ -27,10 +27,13 @@ export default function RootLayout() {
       <Stack.Screen name="splash" />
       <Stack.Screen name="login" />
       <Stack.Screen name="profile-creation" />
-      <Stack.Screen name="home" />
+      <Stack.Screen name="(tabs)" />
       <Stack.Screen name="host-profile" />
       <Stack.Screen name="calling" />
       <Stack.Screen name="wallet" />
+      <Stack.Screen name="transactions" />
+      <Stack.Screen name="privacy-policy" />
+      <Stack.Screen name="change-language" />
     </Stack>
   );
 }

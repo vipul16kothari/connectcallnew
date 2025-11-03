@@ -33,28 +33,20 @@ export default function ProfileCreationScreen() {
   const router = useRouter();
   const [name, setName] = useState('');
   const [selectedGender, setSelectedGender] = useState<string | null>(null);
-  const [selectedLanguages, setSelectedLanguages] = useState<string[]>([]);
-
-  const toggleLanguage = (language: string) => {
-    setSelectedLanguages((prev) =>
-      prev.includes(language)
-        ? prev.filter((l) => l !== language)
-        : [...prev, language]
-    );
-  };
+  const [selectedLanguage, setSelectedLanguage] = useState<string | null>(null);
 
   const handleCompleteProfile = () => {
-    if (name.trim() && selectedGender && selectedLanguages.length > 0) {
+    if (name.trim() && selectedGender && selectedLanguage) {
       console.log('Profile created:', {
         name,
         gender: selectedGender,
-        languages: selectedLanguages,
+        language: selectedLanguage,
       });
-      router.replace('/home');
+      router.replace('/(tabs)');
     }
   };
 
-  const isFormValid = name.trim() && selectedGender && selectedLanguages.length > 0;
+  const isFormValid = name.trim() && selectedGender && selectedLanguage;
 
   return (
     <KeyboardAvoidingView
@@ -113,11 +105,11 @@ export default function ProfileCreationScreen() {
           </View>
         </View>
 
-        {/* Languages Selection */}
+        {/* Language Selection */}
         <View style={styles.section}>
           <Text style={styles.label}>
-            Languages{' '}
-            <Text style={styles.labelHint}>(Select one or more)</Text>
+            Language{' '}
+            <Text style={styles.labelHint}>(Select one)</Text>
           </Text>
           <View style={styles.languagesGrid}>
             {LANGUAGES.map((language) => (
@@ -125,16 +117,16 @@ export default function ProfileCreationScreen() {
                 key={language}
                 style={[
                   styles.languageChip,
-                  selectedLanguages.includes(language) &&
+                  selectedLanguage === language &&
                     styles.languageChipSelected,
                 ]}
-                onPress={() => toggleLanguage(language)}
+                onPress={() => setSelectedLanguage(language)}
                 activeOpacity={0.7}
               >
                 <Text
                   style={[
                     styles.languageText,
-                    selectedLanguages.includes(language) &&
+                    selectedLanguage === language &&
                       styles.languageTextSelected,
                   ]}
                 >

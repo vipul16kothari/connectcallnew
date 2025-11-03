@@ -6,6 +6,7 @@ export const MOCK_HOSTS: Host[] = [
     name: 'Sarah Chen',
     profilePicture: 'https://i.pravatar.cc/300?img=1',
     languages: ['English', 'Chinese'],
+    specialties: ['Career', 'Travel', 'Culture'],
     bio: 'Travel enthusiast and language expert with 5 years of experience. Love discussing culture, food, and adventure stories!',
     rating: 4.9,
     audioCostPerMin: 10,
@@ -17,6 +18,7 @@ export const MOCK_HOSTS: Host[] = [
     name: 'Marco Rossi',
     profilePicture: 'https://i.pravatar.cc/300?img=12',
     languages: ['English', 'Italian', 'Spanish'],
+    specialties: ['Arts', 'History', 'Food'],
     bio: 'Passionate about arts, history, and Italian cuisine. Let\'s chat about life and learn together!',
     rating: 4.8,
     audioCostPerMin: 12,
@@ -28,6 +30,7 @@ export const MOCK_HOSTS: Host[] = [
     name: 'Emma Williams',
     profilePicture: 'https://i.pravatar.cc/300?img=5',
     languages: ['English', 'French'],
+    specialties: ['Life Coaching', 'Motivation', 'Wellness'],
     bio: 'Life coach and motivational speaker. Here to inspire and have meaningful conversations with you.',
     rating: 4.95,
     audioCostPerMin: 15,
@@ -39,6 +42,7 @@ export const MOCK_HOSTS: Host[] = [
     name: 'Yuki Tanaka',
     profilePicture: 'https://i.pravatar.cc/300?img=47',
     languages: ['English', 'Japanese'],
+    specialties: ['Technology', 'Anime', 'Gaming'],
     bio: 'Anime and manga lover, tech geek. Let\'s discuss Japanese culture and technology!',
     rating: 4.7,
     audioCostPerMin: 8,
@@ -50,6 +54,7 @@ export const MOCK_HOSTS: Host[] = [
     name: 'Ahmed Hassan',
     profilePicture: 'https://i.pravatar.cc/300?img=33',
     languages: ['English', 'Arabic'],
+    specialties: ['Philosophy', 'Literature', 'Spirituality'],
     bio: 'Philosophy and literature enthusiast. Deep conversations about life, culture, and spirituality.',
     rating: 4.85,
     audioCostPerMin: 10,
@@ -61,6 +66,7 @@ export const MOCK_HOSTS: Host[] = [
     name: 'Sofia Martinez',
     profilePicture: 'https://i.pravatar.cc/300?img=9',
     languages: ['English', 'Spanish', 'Portuguese'],
+    specialties: ['Dance', 'Music', 'Relationships'],
     bio: 'Salsa dancer and music teacher. Let\'s talk about Latin culture, music, and dance!',
     rating: 4.8,
     audioCostPerMin: 11,
@@ -94,6 +100,38 @@ export const COIN_PACKAGES: CoinPackage[] = [
 ];
 
 export const INITIAL_WALLET_BALANCE = 50;
+
+export interface PromoBanner {
+  id: string;
+  title: string;
+  subtitle: string;
+  backgroundColor: string;
+  textColor: string;
+}
+
+export const PROMO_BANNERS: PromoBanner[] = [
+  {
+    id: '1',
+    title: '🎉 Limited Time Offer!',
+    subtitle: 'Get 50% extra coins on your first purchase',
+    backgroundColor: '#A77DFF',
+    textColor: '#FFFFFF',
+  },
+  {
+    id: '2',
+    title: '🌟 New Hosts Available',
+    subtitle: 'Connect with expert hosts in 12+ languages',
+    backgroundColor: '#00D1C5',
+    textColor: '#1C1C23',
+  },
+  {
+    id: '3',
+    title: '💰 Special Weekend Deal',
+    subtitle: 'Video calls starting at just 12 coins/min',
+    backgroundColor: '#FF6B6B',
+    textColor: '#FFFFFF',
+  },
+];
 
 export const MOCK_CALL_HISTORY: CallHistory[] = [
   {

@@ -3,6 +3,7 @@ export interface Host {
   name: string;
   profilePicture: string;
   languages: string[];
+  specialties?: string[];
   bio: string;
   rating: number;
   audioCostPerMin: number;

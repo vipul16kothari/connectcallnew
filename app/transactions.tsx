@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -5,16 +6,51 @@ import {
   FlatList,
   SafeAreaView,
   TouchableOpacity,
+  ActivityIndicator,
+  RefreshControl,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Colors } from '@/constants/Colors';
 import { FontSizes } from '@/constants/Fonts';
-import { MOCK_TRANSACTIONS } from '@/data/mockData';
-import { Transaction } from '@/types/host';
 import { Ionicons } from '@expo/vector-icons';
+import { useUser } from '@/contexts/UserContext';
+import { useToast } from '@/contexts/ToastContext';
+import { transactionService, AppwriteTransaction } from '@/services/appwrite';
+import { parseError } from '@/utils/errorHandler';
 
 export default function TransactionsScreen() {
   const router = useRouter();
+  const { user } = useUser();
+  const { showError } = useToast();
+  const [transactions, setTransactions] = useState<AppwriteTransaction[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  useEffect(() => {
+    loadTransactions();
+  }, [user]);
+
+  const loadTransactions = async () => {
+    if (!user?.authUser) return;
+
+    try {
+      setIsLoading(true);
+      const txHistory = await transactionService.getTransactionHistory(user.authUser.$id);
+      setTransactions(txHistory);
+    } catch (error: any) {
+      console.error('Error loading transactions:', error);
+      const appError = parseError(error);
+      showError(appError.message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    await loadTransactions();
+    setIsRefreshing(false);
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -31,19 +67,37 @@ export default function TransactionsScreen() {
         <View style={styles.placeholder} />
       </View>
 
-      {/* Transactions List */}
-      <FlatList
-        data={MOCK_TRANSACTIONS}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item }) => <TransactionItem transaction={item} />}
-        contentContainerStyle={styles.listContent}
-        showsVerticalScrollIndicator={false}
-      />
+      {isLoading ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={Colors.primary} />
+        </View>
+      ) : (
+        <FlatList
+          data={transactions}
+          keyExtractor={(item) => item.$id}
+          renderItem={({ item }) => <TransactionItem transaction={item} />}
+          contentContainerStyle={styles.listContent}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefreshing}
+              onRefresh={handleRefresh}
+              tintColor={Colors.primary}
+            />
+          }
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <Ionicons name="receipt-outline" size={64} color={Colors.text.light} />
+              <Text style={styles.emptyText}>No transactions yet</Text>
+            </View>
+          }
+        />
+      )}
     </SafeAreaView>
   );
 }
 
-function TransactionItem({ transaction }: { transaction: Transaction }) {
+function TransactionItem({ transaction }: { transaction: AppwriteTransaction }) {
   const formatTimestamp = (timestamp: string) => {
     const date = new Date(timestamp);
     return date.toLocaleDateString('en-US', {
@@ -56,7 +110,7 @@ function TransactionItem({ transaction }: { transaction: Transaction }) {
   };
 
   const isPositive = transaction.amount > 0;
-  const icon = transaction.type === 'purchase' ? 'add-circle' : 'call';
+  const icon = transaction.type === 'purchase' ? 'add-circle' : transaction.type === 'call' ? 'call' : 'refresh';
   const iconColor = isPositive ? Colors.success : Colors.secondary;
 
   return (
@@ -66,7 +120,7 @@ function TransactionItem({ transaction }: { transaction: Transaction }) {
       </View>
       <View style={styles.transactionInfo}>
         <Text style={styles.description}>{transaction.description}</Text>
-        <Text style={styles.timestamp}>{formatTimestamp(transaction.timestamp)}</Text>
+        <Text style={styles.timestamp}>{formatTimestamp(transaction.createdAt)}</Text>
       </View>
       <Text
         style={[
@@ -74,8 +128,8 @@ function TransactionItem({ transaction }: { transaction: Transaction }) {
           { color: isPositive ? Colors.success : Colors.secondary },
         ]}
       >
-        {isPositive ? '+' : ''}
-        {transaction.amount}
+        {isPositive ? '+' : '-'}
+        {Math.abs(transaction.amount)}
       </Text>
     </View>
   );
@@ -110,6 +164,21 @@ const styles = StyleSheet.create({
   },
   placeholder: {
     width: 40,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 80,
+  },
+  emptyText: {
+    fontSize: FontSizes.lg,
+    color: Colors.text.light,
+    marginTop: 16,
   },
   listContent: {
     padding: 16,

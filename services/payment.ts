@@ -1,8 +1,12 @@
 import RazorpayCheckout from 'react-native-razorpay';
 import { Platform } from 'react-native';
+import { userService, transactionService } from './appwrite';
 
 // Payment configuration
 const RAZORPAY_KEY_ID = process.env.EXPO_PUBLIC_RAZORPAY_KEY_ID || '';
+const CASHFREE_APP_ID = process.env.EXPO_PUBLIC_CASHFREE_APP_ID || '';
+
+export type PaymentGateway = 'razorpay' | 'cashfree';
 
 export interface CoinPackage {
   id: string;

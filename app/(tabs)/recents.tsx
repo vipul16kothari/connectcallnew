@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -6,15 +7,82 @@ import {
   TouchableOpacity,
   Image,
   SafeAreaView,
+  ActivityIndicator,
+  RefreshControl,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Colors } from '@/constants/Colors';
 import { FontSizes } from '@/constants/Fonts';
-import { MOCK_CALL_HISTORY } from '@/data/mockData';
-import { CallHistory } from '@/types/host';
 import { Ionicons } from '@expo/vector-icons';
+import { useUser } from '@/contexts/UserContext';
+import { useToast } from '@/contexts/ToastContext';
+import { callService, hostService, AppwriteCall, AppwriteHost } from '@/services/appwrite';
+import { parseError } from '@/utils/errorHandler';
+
+interface CallWithHost extends AppwriteCall {
+  host?: AppwriteHost;
+}
 
 export default function RecentsScreen() {
+  const { user } = useUser();
+  const { showError } = useToast();
+  const [calls, setCalls] = useState<CallWithHost[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  useEffect(() => {
+    loadCallHistory();
+  }, [user]);
+
+  const loadCallHistory = async () => {
+    if (!user?.authUser) return;
+
+    try {
+      setIsLoading(true);
+      const callHistory = await callService.getCallHistory(user.authUser.$id);
+
+      // Fetch host details for each call
+      const callsWithHosts = await Promise.all(
+        callHistory.map(async (call) => {
+          try {
+            const host = await hostService.getHostById(call.hostId);
+            return { ...call, host: host || undefined };
+          } catch (error) {
+            console.error('Error fetching host:', error);
+            return call;
+          }
+        })
+      );
+
+      setCalls(callsWithHosts);
+    } catch (error: any) {
+      console.error('Error loading call history:', error);
+      const appError = parseError(error);
+      showError(appError.message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    await loadCallHistory();
+    setIsRefreshing(false);
+  };
+
+  if (isLoading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>Recent Calls</Text>
+        </View>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={Colors.primary} />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.container}>
       {/* Header */}
@@ -24,11 +92,18 @@ export default function RecentsScreen() {
 
       {/* Call History List */}
       <FlatList
-        data={MOCK_CALL_HISTORY}
-        keyExtractor={(item) => item.id}
+        data={calls}
+        keyExtractor={(item) => item.$id}
         renderItem={({ item }) => <CallHistoryItem call={item} />}
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={handleRefresh}
+            tintColor={Colors.primary}
+          />
+        }
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
             <Ionicons name="call-outline" size={64} color={Colors.text.light} />
@@ -40,7 +115,7 @@ export default function RecentsScreen() {
   );
 }
 
-function CallHistoryItem({ call }: { call: CallHistory }) {
+function CallHistoryItem({ call }: { call: CallWithHost }) {
   const router = useRouter();
 
   const formatTimestamp = (timestamp: string) => {
@@ -70,79 +145,79 @@ function CallHistoryItem({ call }: { call: CallHistory }) {
   };
 
   const handleAudioCall = () => {
-    if (call.isHostOnline) {
+    if (call.host?.isOnline) {
       router.push({
         pathname: '/calling',
         params: {
-          hostId: call.hostId,
-          hostName: call.hostName,
-          hostPicture: call.hostProfilePicture,
+          hostId: call.host.$id,
+          hostName: call.host.name,
+          hostPicture: call.host.profilePictureUrl,
           isVideo: '0',
-          costPerMin: '10',
+          costPerMin: call.host.audioCostPerMin.toString(),
         },
       });
     }
   };
 
   const handleVideoCall = () => {
-    if (call.isHostOnline) {
+    if (call.host?.isOnline) {
       router.push({
         pathname: '/calling',
         params: {
-          hostId: call.hostId,
-          hostName: call.hostName,
-          hostPicture: call.hostProfilePicture,
+          hostId: call.host.$id,
+          hostName: call.host.name,
+          hostPicture: call.host.profilePictureUrl,
           isVideo: '1',
-          costPerMin: '15',
+          costPerMin: call.host.videoCostPerMin.toString(),
         },
       });
     }
   };
 
   const callTypeText = call.callType === 'video' ? 'Video' : 'Audio';
+  const hostName = call.host?.name || 'Unknown Host';
+  const hostPicture = call.host?.profilePictureUrl || 'https://via.placeholder.com/150';
+  const isHostOnline = call.host?.isOnline || false;
 
   return (
     <View style={styles.callItem}>
-      <Image
-        source={{ uri: call.hostProfilePicture }}
-        style={styles.profilePicture}
-      />
+      <Image source={{ uri: hostPicture }} style={styles.profilePicture} />
       <View style={styles.callInfo}>
-        <Text style={styles.hostName}>{call.hostName}</Text>
+        <Text style={styles.hostName}>{hostName}</Text>
         <Text style={styles.callDetails}>
           Outgoing {callTypeText} • {formatDuration(call.duration)}
         </Text>
-        <Text style={styles.timestamp}>{formatTimestamp(call.timestamp)}</Text>
+        <Text style={styles.timestamp}>{formatTimestamp(call.startTime)}</Text>
       </View>
       <View style={styles.actionButtons}>
         <TouchableOpacity
           style={[
             styles.callButton,
-            !call.isHostOnline && styles.callButtonDisabled,
+            !isHostOnline && styles.callButtonDisabled,
           ]}
           onPress={handleAudioCall}
-          disabled={!call.isHostOnline}
+          disabled={!isHostOnline}
           activeOpacity={0.7}
         >
           <Ionicons
             name="call"
             size={20}
-            color={call.isHostOnline ? Colors.accent : Colors.text.light}
+            color={isHostOnline ? Colors.accent : Colors.text.light}
           />
         </TouchableOpacity>
         <TouchableOpacity
           style={[
             styles.callButton,
-            !call.isHostOnline && styles.callButtonDisabled,
+            !isHostOnline && styles.callButtonDisabled,
           ]}
           onPress={handleVideoCall}
-          disabled={!call.isHostOnline}
+          disabled={!isHostOnline}
           activeOpacity={0.7}
         >
           <Ionicons
             name="videocam"
             size={22}
-            color={call.isHostOnline ? Colors.accent : Colors.text.light}
+            color={isHostOnline ? Colors.accent : Colors.text.light}
           />
         </TouchableOpacity>
       </View>
@@ -166,6 +241,11 @@ const styles = StyleSheet.create({
     fontSize: FontSizes.xl,
     fontWeight: '700',
     color: Colors.text.primary,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   listContent: {
     padding: 16,

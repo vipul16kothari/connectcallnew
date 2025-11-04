@@ -26,7 +26,7 @@ const BANNER_SPACING = 16;
 
 export default function HomeScreen() {
   const router = useRouter();
-  const { userProfile } = useUser();
+  const { user } = useUser();
   const [walletBalance] = useState(INITIAL_WALLET_BALANCE);
   const [showSuperHostSheet, setShowSuperHostSheet] = useState(false);
   const scrollX = useRef(new Animated.Value(0)).current;
@@ -34,10 +34,10 @@ export default function HomeScreen() {
 
   // Redirect to host dashboard if user is an approved host
   useEffect(() => {
-    if (userProfile?.isHost && userProfile?.hostStatus === 'approved') {
+    if (user?.userProfile?.isHost && user?.userProfile?.hostStatus === 'approved') {
       router.replace('/host-dashboard');
     }
-  }, [userProfile, router]);
+  }, [user, router]);
 
   useEffect(() => {
     // Floating animation for FAB
@@ -59,13 +59,13 @@ export default function HomeScreen() {
 
   useEffect(() => {
     // Show SuperHost sheet for female users who haven't applied or aren't hosts
-    if (userProfile?.gender === 'Female' && userProfile?.hostStatus === 'none') {
+    if (user?.userProfile?.gender === 'Female' && user?.userProfile?.hostStatus === 'none') {
       const timer = setTimeout(() => {
         setShowSuperHostSheet(true);
       }, 2000); // Show after 2 seconds
       return () => clearTimeout(timer);
     }
-  }, [userProfile]);
+  }, [user]);
 
   const handleRandomCall = () => {
     const randomHost = MOCK_HOSTS[Math.floor(Math.random() * MOCK_HOSTS.length)];

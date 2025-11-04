@@ -8,6 +8,7 @@ import {
   ScrollView,
   KeyboardAvoidingView,
   Platform,
+  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Colors } from '@/constants/Colors';
@@ -32,21 +33,29 @@ const LANGUAGES = [
 
 export default function ProfileCreationScreen() {
   const router = useRouter();
-  const { setUserProfile } = useUser();
+  const { user, createUserProfile } = useUser();
   const [name, setName] = useState('');
   const [selectedGender, setSelectedGender] = useState<'Male' | 'Female' | 'Other' | null>(null);
   const [selectedLanguage, setSelectedLanguage] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
 
   const handleCompleteProfile = async () => {
-    if (name.trim() && selectedGender && selectedLanguage) {
-      await setUserProfile({
-        name,
-        gender: selectedGender,
-        language: selectedLanguage,
-        hostStatus: 'none',
-        isHost: false,
-      });
-      router.replace('/(tabs)');
+    if (name.trim() && selectedGender && selectedLanguage && user?.authUser) {
+      try {
+        setIsLoading(true);
+        await createUserProfile({
+          name,
+          gender: selectedGender,
+          language: selectedLanguage,
+          phone: user.authUser.phone || user.authUser.email?.split('@')[0] || '',
+        });
+        router.replace('/(tabs)');
+      } catch (error) {
+        console.error('Profile creation error:', error);
+        Alert.alert('Error', 'Failed to create profile. Please try again.');
+      } finally {
+        setIsLoading(false);
+      }
     }
   };
 

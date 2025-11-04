@@ -14,6 +14,7 @@ export const Colors = {
   text: {
     primary: '#F5F5F5',        // Off-white for main text
     secondary: '#9E9EA7',      // Muted gray for secondary text
+    tertiary: '#6B6B76',       // Tertiary text color
     light: '#6B6B76',          // Even more muted for hints
     muted: '#505058',          // Very subtle text
   },

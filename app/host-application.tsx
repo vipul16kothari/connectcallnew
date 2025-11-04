@@ -20,7 +20,7 @@ import { useUser } from '@/contexts/UserContext';
 
 export default function HostApplicationScreen() {
   const router = useRouter();
-  const { userProfile, updateHostStatus } = useUser();
+  const { user, updateHostStatus } = useUser();
   const [age, setAge] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [hasRecording, setHasRecording] = useState(false);
@@ -140,7 +140,7 @@ export default function HostApplicationScreen() {
           <View style={styles.section}>
             <Text style={styles.label}>Name</Text>
             <View style={styles.inputDisabled}>
-              <Text style={styles.inputDisabledText}>{userProfile?.name || 'Your Name'}</Text>
+              <Text style={styles.inputDisabledText}>{user?.userProfile?.name || 'Your Name'}</Text>
             </View>
           </View>
 

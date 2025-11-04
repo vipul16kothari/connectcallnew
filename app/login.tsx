@@ -2,73 +2,158 @@ import { useState } from 'react';
 import {
   View,
   Text,
+  StyleSheet,
   TextInput,
   TouchableOpacity,
-  StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
-  Image,
+  SafeAreaView,
+  Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Colors } from '@/constants/Colors';
 import { FontSizes } from '@/constants/Fonts';
+import { useUser } from '@/contexts/UserContext';
 
 export default function LoginScreen() {
-  const [phoneNumber, setPhoneNumber] = useState('');
   const router = useRouter();
+  const { login, createAccount, isLoading } = useUser();
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [isNewUser, setIsNewUser] = useState(false);
+  const [name, setName] = useState('');
 
-  const handleContinue = () => {
-    if (phoneNumber.trim()) {
-      router.push('/profile-creation');
+  const handleSubmit = async () => {
+    if (!phoneNumber || phoneNumber.length < 10) {
+      Alert.alert('Invalid Phone', 'Please enter a valid phone number');
+      return;
+    }
+
+    if (isNewUser && !name.trim()) {
+      Alert.alert('Name Required', 'Please enter your name');
+      return;
+    }
+
+    try {
+      if (isNewUser) {
+        await createAccount(phoneNumber, name);
+        // After account creation, redirect to profile creation
+        router.replace('/profile-creation');
+      } else {
+        await login(phoneNumber);
+        // After login, user will be redirected based on profile status
+        router.replace('/(tabs)');
+      }
+    } catch (error: any) {
+      console.error('Authentication error:', error);
+
+      if (error.code === 404 || error.message?.includes('not found')) {
+        Alert.alert(
+          'Account Not Found',
+          'No account found with this phone number. Would you like to create a new account?',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Create Account',
+              onPress: () => setIsNewUser(true),
+            },
+          ]
+        );
+      } else if (error.code === 409 || error.message?.includes('already exists')) {
+        Alert.alert(
+          'Account Exists',
+          'An account with this phone number already exists. Please login instead.',
+          [{ text: 'OK', onPress: () => setIsNewUser(false) }]
+        );
+      } else {
+        Alert.alert(
+          'Authentication Error',
+          error.message || 'Failed to authenticate. Please try again.'
+        );
+      }
     }
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
+    <SafeAreaView style={styles.container}>
       <View style={styles.content}>
-        <Image
-          source={require('@/assets/images/connectcall-logo.png')}
-          style={styles.logo}
-          resizeMode="contain"
-        />
-
-        <Text style={styles.title}>Welcome to Connectcall</Text>
-        <Text style={styles.subtitle}>
-          Enter your phone number to get started
-        </Text>
-
-        <View style={styles.inputContainer}>
-          <TextInput
-            style={styles.input}
-            placeholder="Phone Number"
-            placeholderTextColor={Colors.text.light}
-            value={phoneNumber}
-            onChangeText={setPhoneNumber}
-            keyboardType="phone-pad"
-            autoFocus
-          />
+        {/* Header */}
+        <View style={styles.header}>
+          <Text style={styles.title}>Welcome to</Text>
+          <Text style={styles.appName}>Connectcall</Text>
+          <Text style={styles.subtitle}>
+            {isNewUser ? 'Create your account to get started' : 'Login to continue'}
+          </Text>
         </View>
 
-        <TouchableOpacity
-          style={[
-            styles.button,
-            !phoneNumber.trim() && styles.buttonDisabled,
-          ]}
-          onPress={handleContinue}
-          disabled={!phoneNumber.trim()}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.buttonText}>Continue</Text>
-        </TouchableOpacity>
+        {/* Form */}
+        <View style={styles.form}>
+          {isNewUser && (
+            <View style={styles.inputContainer}>
+              <Text style={styles.label}>Full Name</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Enter your name"
+                placeholderTextColor={Colors.text.tertiary}
+                value={name}
+                onChangeText={setName}
+                autoCapitalize="words"
+                editable={!isLoading}
+              />
+            </View>
+          )}
 
-        <Text style={styles.termsText}>
-          By continuing, you agree to our Terms of Service and Privacy Policy
-        </Text>
+          <View style={styles.inputContainer}>
+            <Text style={styles.label}>Phone Number</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Enter your phone number"
+              placeholderTextColor={Colors.text.tertiary}
+              value={phoneNumber}
+              onChangeText={setPhoneNumber}
+              keyboardType="phone-pad"
+              maxLength={10}
+              editable={!isLoading}
+            />
+          </View>
+
+          {/* Submit Button */}
+          <TouchableOpacity
+            style={[styles.submitButton, isLoading && styles.submitButtonDisabled]}
+            onPress={handleSubmit}
+            activeOpacity={0.8}
+            disabled={isLoading}
+          >
+            {isLoading ? (
+              <ActivityIndicator color={Colors.white} />
+            ) : (
+              <Text style={styles.submitButtonText}>
+                {isNewUser ? 'Create Account' : 'Login'}
+              </Text>
+            )}
+          </TouchableOpacity>
+
+          {/* Toggle Login/Signup */}
+          <TouchableOpacity
+            style={styles.toggleButton}
+            onPress={() => setIsNewUser(!isNewUser)}
+            disabled={isLoading}
+          >
+            <Text style={styles.toggleText}>
+              {isNewUser ? 'Already have an account? ' : "Don't have an account? "}
+              <Text style={styles.toggleTextBold}>
+                {isNewUser ? 'Login' : 'Sign Up'}
+              </Text>
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Info */}
+        <View style={styles.infoContainer}>
+          <Text style={styles.infoText}>
+            By continuing, you agree to our Terms of Service and Privacy Policy
+          </Text>
+        </View>
       </View>
-    </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
@@ -82,63 +167,81 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     justifyContent: 'center',
   },
-  logo: {
-    width: 120,
-    height: 120,
-    alignSelf: 'center',
-    marginBottom: 32,
+  header: {
+    marginBottom: 48,
   },
   title: {
-    fontSize: FontSizes['3xl'],
-    fontWeight: '700',
-    color: Colors.primary,
-    textAlign: 'center',
+    fontSize: FontSizes['2xl'],
+    fontWeight: '600',
+    color: Colors.text.secondary,
     marginBottom: 8,
+  },
+  appName: {
+    fontSize: FontSizes['4xl'],
+    fontWeight: '800',
+    color: Colors.primary,
+    marginBottom: 12,
   },
   subtitle: {
     fontSize: FontSizes.base,
     color: Colors.text.secondary,
-    textAlign: 'center',
-    marginBottom: 48,
+  },
+  form: {
+    marginBottom: 32,
   },
   inputContainer: {
-    marginBottom: 24,
+    marginBottom: 20,
+  },
+  label: {
+    fontSize: FontSizes.sm,
+    fontWeight: '600',
+    color: Colors.text.primary,
+    marginBottom: 8,
   },
   input: {
     backgroundColor: Colors.surface,
-    borderRadius: 12,
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    fontSize: FontSizes.base,
-    color: Colors.text.primary,
     borderWidth: 1,
     borderColor: Colors.border,
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    fontSize: FontSizes.base,
+    color: Colors.text.primary,
   },
-  button: {
-    backgroundColor: Colors.accent,
+  submitButton: {
+    backgroundColor: Colors.primary,
     borderRadius: 12,
     paddingVertical: 16,
     alignItems: 'center',
-    shadowColor: Colors.accent,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
+    marginTop: 12,
   },
-  buttonDisabled: {
-    backgroundColor: Colors.border,
-    shadowOpacity: 0,
+  submitButtonDisabled: {
+    opacity: 0.6,
   },
-  buttonText: {
+  submitButtonText: {
+    fontSize: FontSizes.base,
+    fontWeight: '700',
     color: Colors.white,
-    fontSize: FontSizes.lg,
-    fontWeight: '600',
   },
-  termsText: {
+  toggleButton: {
+    marginTop: 20,
+    alignItems: 'center',
+  },
+  toggleText: {
+    fontSize: FontSizes.sm,
+    color: Colors.text.secondary,
+  },
+  toggleTextBold: {
+    fontWeight: '700',
+    color: Colors.primary,
+  },
+  infoContainer: {
+    paddingHorizontal: 20,
+  },
+  infoText: {
     fontSize: FontSizes.xs,
-    color: Colors.text.light,
+    color: Colors.text.tertiary,
     textAlign: 'center',
-    marginTop: 24,
     lineHeight: 18,
   },
 });

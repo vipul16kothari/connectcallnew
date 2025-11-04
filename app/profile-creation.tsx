@@ -12,8 +12,9 @@ import {
 import { useRouter } from 'expo-router';
 import { Colors } from '@/constants/Colors';
 import { FontSizes } from '@/constants/Fonts';
+import { useUser } from '@/contexts/UserContext';
 
-const GENDERS = ['Male', 'Female', 'Other'];
+const GENDERS = ['Male', 'Female', 'Other'] as const;
 const LANGUAGES = [
   'English',
   'Spanish',
@@ -31,16 +32,19 @@ const LANGUAGES = [
 
 export default function ProfileCreationScreen() {
   const router = useRouter();
+  const { setUserProfile } = useUser();
   const [name, setName] = useState('');
-  const [selectedGender, setSelectedGender] = useState<string | null>(null);
+  const [selectedGender, setSelectedGender] = useState<'Male' | 'Female' | 'Other' | null>(null);
   const [selectedLanguage, setSelectedLanguage] = useState<string | null>(null);
 
-  const handleCompleteProfile = () => {
+  const handleCompleteProfile = async () => {
     if (name.trim() && selectedGender && selectedLanguage) {
-      console.log('Profile created:', {
+      await setUserProfile({
         name,
         gender: selectedGender,
         language: selectedLanguage,
+        hostStatus: 'none',
+        isHost: false,
       });
       router.replace('/(tabs)');
     }
@@ -89,7 +93,7 @@ export default function ProfileCreationScreen() {
                   styles.optionButton,
                   selectedGender === gender && styles.optionButtonSelected,
                 ]}
-                onPress={() => setSelectedGender(gender)}
+                onPress={() => setSelectedGender(gender as 'Male' | 'Female' | 'Other')}
                 activeOpacity={0.7}
               >
                 <Text
@@ -198,7 +202,7 @@ const styles = StyleSheet.create({
     color: Colors.text.light,
   },
   input: {
-    backgroundColor: Colors.white,
+    backgroundColor: Colors.surface,
     borderRadius: 12,
     paddingHorizontal: 20,
     paddingVertical: 16,
@@ -206,11 +210,6 @@ const styles = StyleSheet.create({
     color: Colors.text.primary,
     borderWidth: 1,
     borderColor: Colors.border,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
   },
   optionsRow: {
     flexDirection: 'row',
@@ -218,7 +217,7 @@ const styles = StyleSheet.create({
   },
   optionButton: {
     flex: 1,
-    backgroundColor: Colors.white,
+    backgroundColor: Colors.surface,
     borderRadius: 12,
     paddingVertical: 16,
     alignItems: 'center',
@@ -243,7 +242,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   languageChip: {
-    backgroundColor: Colors.white,
+    backgroundColor: Colors.surface,
     borderRadius: 20,
     paddingHorizontal: 20,
     paddingVertical: 12,

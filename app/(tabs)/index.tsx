@@ -17,6 +17,8 @@ import { FontSizes } from '@/constants/Fonts';
 import { MOCK_HOSTS, INITIAL_WALLET_BALANCE, PROMO_BANNERS, PromoBanner } from '@/data/mockData';
 import { Host } from '@/types/host';
 import { Ionicons } from '@expo/vector-icons';
+import { useUser } from '@/contexts/UserContext';
+import SuperHostBottomSheet from '@/components/SuperHostBottomSheet';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const BANNER_WIDTH = SCREEN_WIDTH - 40;
@@ -24,9 +26,18 @@ const BANNER_SPACING = 16;
 
 export default function HomeScreen() {
   const router = useRouter();
+  const { userProfile } = useUser();
   const [walletBalance] = useState(INITIAL_WALLET_BALANCE);
+  const [showSuperHostSheet, setShowSuperHostSheet] = useState(false);
   const scrollX = useRef(new Animated.Value(0)).current;
   const fabAnim = useRef(new Animated.Value(1)).current;
+
+  // Redirect to host dashboard if user is an approved host
+  useEffect(() => {
+    if (userProfile?.isHost && userProfile?.hostStatus === 'approved') {
+      router.replace('/host-dashboard');
+    }
+  }, [userProfile, router]);
 
   useEffect(() => {
     // Floating animation for FAB
@@ -45,6 +56,16 @@ export default function HomeScreen() {
       ])
     ).start();
   }, [fabAnim]);
+
+  useEffect(() => {
+    // Show SuperHost sheet for female users who haven't applied or aren't hosts
+    if (userProfile?.gender === 'Female' && userProfile?.hostStatus === 'none') {
+      const timer = setTimeout(() => {
+        setShowSuperHostSheet(true);
+      }, 2000); // Show after 2 seconds
+      return () => clearTimeout(timer);
+    }
+  }, [userProfile]);
 
   const handleRandomCall = () => {
     const randomHost = MOCK_HOSTS[Math.floor(Math.random() * MOCK_HOSTS.length)];
@@ -76,6 +97,10 @@ export default function HomeScreen() {
 
   return (
     <View style={styles.container}>
+      <SuperHostBottomSheet
+        visible={showSuperHostSheet}
+        onClose={() => setShowSuperHostSheet(false)}
+      />
       <SafeAreaView style={styles.safeArea}>
         {/* Header */}
         <View style={styles.header}>

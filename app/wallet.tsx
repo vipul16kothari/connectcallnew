@@ -140,7 +140,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: Colors.white,
+    backgroundColor: Colors.surface,
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
   },
@@ -243,7 +243,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   packageCard: {
-    backgroundColor: Colors.white,
+    backgroundColor: Colors.surface,
     borderRadius: 16,
     padding: 20,
     flexDirection: 'row',
@@ -251,11 +251,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderWidth: 2,
     borderColor: Colors.border,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
   },
   packageCardPopular: {
     borderColor: Colors.accent,
@@ -287,7 +282,7 @@ const styles = StyleSheet.create({
   purchaseButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.white,
+    backgroundColor: Colors.surfaceLight,
     borderWidth: 2,
     borderColor: Colors.accent,
     borderRadius: 12,
@@ -308,10 +303,12 @@ const styles = StyleSheet.create({
     color: Colors.white,
   },
   infoSection: {
-    backgroundColor: Colors.white,
+    backgroundColor: Colors.surface,
     borderRadius: 16,
     padding: 20,
     gap: 16,
+    borderWidth: 1,
+    borderColor: Colors.border,
   },
   infoItem: {
     flexDirection: 'row',

@@ -105,7 +105,7 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   input: {
-    backgroundColor: Colors.white,
+    backgroundColor: Colors.surface,
     borderRadius: 12,
     paddingHorizontal: 20,
     paddingVertical: 16,
@@ -113,11 +113,6 @@ const styles = StyleSheet.create({
     color: Colors.text.primary,
     borderWidth: 1,
     borderColor: Colors.border,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
   },
   button: {
     backgroundColor: Colors.accent,

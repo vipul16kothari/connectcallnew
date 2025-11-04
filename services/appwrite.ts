@@ -1,19 +1,11 @@
 import { Client, Account, Databases, Storage, Query, ID, RealtimeResponseEvent } from 'appwrite';
 import { Models } from 'appwrite';
-
-// Appwrite configuration
-const APPWRITE_ENDPOINT = process.env.EXPO_PUBLIC_APPWRITE_ENDPOINT || 'https://cloud.appwrite.io/v1';
-const APPWRITE_PROJECT_ID = process.env.EXPO_PUBLIC_APPWRITE_PROJECT_ID || '';
-const APPWRITE_DATABASE_ID = process.env.EXPO_PUBLIC_APPWRITE_DATABASE_ID || '';
-const APPWRITE_USERS_COLLECTION_ID = process.env.EXPO_PUBLIC_APPWRITE_USERS_COLLECTION_ID || '';
-const APPWRITE_HOSTS_COLLECTION_ID = process.env.EXPO_PUBLIC_APPWRITE_HOSTS_COLLECTION_ID || '';
-const APPWRITE_CALLS_COLLECTION_ID = process.env.EXPO_PUBLIC_APPWRITE_CALLS_COLLECTION_ID || '';
-const APPWRITE_TRANSACTIONS_COLLECTION_ID = process.env.EXPO_PUBLIC_APPWRITE_TRANSACTIONS_COLLECTION_ID || '';
+import { APPWRITE_CONFIG } from '@/config/api.config';
 
 // Initialize Appwrite Client
 const client = new Client()
-  .setEndpoint(APPWRITE_ENDPOINT)
-  .setProject(APPWRITE_PROJECT_ID);
+  .setEndpoint(APPWRITE_CONFIG.endpoint)
+  .setProject(APPWRITE_CONFIG.projectId);
 
 // Initialize Services
 export const account = new Account(client);
@@ -154,8 +146,8 @@ export class UserService {
   ): Promise<AppwriteUser> {
     try {
       const userDoc = await databases.createDocument(
-        APPWRITE_DATABASE_ID,
-        APPWRITE_USERS_COLLECTION_ID,
+        APPWRITE_CONFIG.databaseId,
+        APPWRITE_CONFIG.collections.users,
         ID.unique(),
         {
           userId,
@@ -183,8 +175,8 @@ export class UserService {
   async getUserProfile(userId: string): Promise<AppwriteUser | null> {
     try {
       const response = await databases.listDocuments(
-        APPWRITE_DATABASE_ID,
-        APPWRITE_USERS_COLLECTION_ID,
+        APPWRITE_CONFIG.databaseId,
+        APPWRITE_CONFIG.collections.users,
         [Query.equal('userId', userId)]
       );
       return response.documents.length > 0 ? (response.documents[0] as unknown as AppwriteUser) : null;
@@ -200,8 +192,8 @@ export class UserService {
   async updateUserProfile(documentId: string, data: Partial<AppwriteUser>): Promise<AppwriteUser> {
     try {
       const updatedDoc = await databases.updateDocument(
-        APPWRITE_DATABASE_ID,
-        APPWRITE_USERS_COLLECTION_ID,
+        APPWRITE_CONFIG.databaseId,
+        APPWRITE_CONFIG.collections.users,
         documentId,
         {
           ...data,
@@ -221,16 +213,16 @@ export class UserService {
   async updateWalletBalance(documentId: string, amount: number): Promise<AppwriteUser> {
     try {
       const userProfile = await databases.getDocument(
-        APPWRITE_DATABASE_ID,
-        APPWRITE_USERS_COLLECTION_ID,
+        APPWRITE_CONFIG.databaseId,
+        APPWRITE_CONFIG.collections.users,
         documentId
       ) as AppwriteUser;
 
       const newBalance = (userProfile.walletBalance || 0) + amount;
 
       const updatedDoc = await databases.updateDocument(
-        APPWRITE_DATABASE_ID,
-        APPWRITE_USERS_COLLECTION_ID,
+        APPWRITE_CONFIG.databaseId,
+        APPWRITE_CONFIG.collections.users,
         documentId,
         {
           walletBalance: newBalance,
@@ -265,8 +257,8 @@ export class UserService {
 
       // Create host profile (pending approval)
       await databases.createDocument(
-        APPWRITE_DATABASE_ID,
-        APPWRITE_HOSTS_COLLECTION_ID,
+        APPWRITE_CONFIG.databaseId,
+        APPWRITE_CONFIG.collections.hosts,
         ID.unique(),
         {
           userId,
@@ -300,8 +292,8 @@ export class HostService {
   async getOnlineHosts(): Promise<AppwriteHost[]> {
     try {
       const response = await databases.listDocuments(
-        APPWRITE_DATABASE_ID,
-        APPWRITE_HOSTS_COLLECTION_ID,
+        APPWRITE_CONFIG.databaseId,
+        APPWRITE_CONFIG.collections.hosts,
         [Query.equal('isOnline', true), Query.orderDesc('rating'), Query.limit(50)]
       );
       return response.documents as unknown as AppwriteHost[];
@@ -317,8 +309,8 @@ export class HostService {
   async getHostById(hostId: string): Promise<AppwriteHost | null> {
     try {
       const host = await databases.getDocument(
-        APPWRITE_DATABASE_ID,
-        APPWRITE_HOSTS_COLLECTION_ID,
+        APPWRITE_CONFIG.databaseId,
+        APPWRITE_CONFIG.collections.hosts,
         hostId
       );
       return host as unknown as AppwriteHost;
@@ -334,8 +326,8 @@ export class HostService {
   async getHostByUserId(userId: string): Promise<AppwriteHost | null> {
     try {
       const response = await databases.listDocuments(
-        APPWRITE_DATABASE_ID,
-        APPWRITE_HOSTS_COLLECTION_ID,
+        APPWRITE_CONFIG.databaseId,
+        APPWRITE_CONFIG.collections.hosts,
         [Query.equal('userId', userId)]
       );
       return response.documents.length > 0 ? (response.documents[0] as unknown as AppwriteHost) : null;
@@ -351,8 +343,8 @@ export class HostService {
   async updateOnlineStatus(hostDocumentId: string, isOnline: boolean): Promise<AppwriteHost> {
     try {
       const updatedHost = await databases.updateDocument(
-        APPWRITE_DATABASE_ID,
-        APPWRITE_HOSTS_COLLECTION_ID,
+        APPWRITE_CONFIG.databaseId,
+        APPWRITE_CONFIG.collections.hosts,
         hostDocumentId,
         {
           isOnline,
@@ -372,7 +364,7 @@ export class HostService {
    */
   subscribeToHostUpdates(callback: (payload: RealtimeResponseEvent<AppwriteHost>) => void) {
     return client.subscribe(
-      `databases.${APPWRITE_DATABASE_ID}.collections.${APPWRITE_HOSTS_COLLECTION_ID}.documents`,
+      `databases.${APPWRITE_CONFIG.databaseId}.collections.${APPWRITE_CONFIG.collections.hosts}.documents`,
       callback
     );
   }
@@ -391,8 +383,8 @@ export class CallService {
   }): Promise<AppwriteCall> {
     try {
       const callDoc = await databases.createDocument(
-        APPWRITE_DATABASE_ID,
-        APPWRITE_CALLS_COLLECTION_ID,
+        APPWRITE_CONFIG.databaseId,
+        APPWRITE_CONFIG.collections.calls,
         ID.unique(),
         {
           callId: data.callId,
@@ -423,8 +415,8 @@ export class CallService {
   ): Promise<AppwriteCall> {
     try {
       const updatedCall = await databases.updateDocument(
-        APPWRITE_DATABASE_ID,
-        APPWRITE_CALLS_COLLECTION_ID,
+        APPWRITE_CONFIG.databaseId,
+        APPWRITE_CONFIG.collections.calls,
         callDocumentId,
         {
           endTime: new Date().toISOString(),
@@ -446,8 +438,8 @@ export class CallService {
   async getCallHistory(userId: string, limit: number = 20): Promise<AppwriteCall[]> {
     try {
       const response = await databases.listDocuments(
-        APPWRITE_DATABASE_ID,
-        APPWRITE_CALLS_COLLECTION_ID,
+        APPWRITE_CONFIG.databaseId,
+        APPWRITE_CONFIG.collections.calls,
         [
           Query.equal('userId', userId),
           Query.equal('status', 'completed'),
@@ -478,8 +470,8 @@ export class TransactionService {
   }): Promise<AppwriteTransaction> {
     try {
       const transactionDoc = await databases.createDocument(
-        APPWRITE_DATABASE_ID,
-        APPWRITE_TRANSACTIONS_COLLECTION_ID,
+        APPWRITE_CONFIG.databaseId,
+        APPWRITE_CONFIG.collections.transactions,
         ID.unique(),
         {
           userId: data.userId,
@@ -505,8 +497,8 @@ export class TransactionService {
   async getTransactionHistory(userId: string, limit: number = 50): Promise<AppwriteTransaction[]> {
     try {
       const response = await databases.listDocuments(
-        APPWRITE_DATABASE_ID,
-        APPWRITE_TRANSACTIONS_COLLECTION_ID,
+        APPWRITE_CONFIG.databaseId,
+        APPWRITE_CONFIG.collections.transactions,
         [Query.equal('userId', userId), Query.orderDesc('createdAt'), Query.limit(limit)]
       );
       return response.documents as unknown as AppwriteTransaction[];

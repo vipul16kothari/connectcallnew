@@ -13,8 +13,15 @@ export interface AppError {
  * Parse and categorize errors from Appwrite or network requests
  */
 export function parseError(error: any): AppError {
-  // Network errors
-  if (!navigator.onLine || error.message?.includes('network') || error.message?.includes('fetch')) {
+  // Network errors - check for specific network-related error patterns
+  const errorMessage = error.message?.toLowerCase() || '';
+  const isNetworkError =
+    errorMessage.includes('network request failed') ||
+    errorMessage.includes('failed to fetch') ||
+    errorMessage.includes('connection') ||
+    error.code === 'NETWORK_ERROR';
+
+  if (isNetworkError) {
     return {
       type: 'network',
       message: 'No internet connection. Please check your network and try again.',

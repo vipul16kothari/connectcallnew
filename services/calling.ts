@@ -156,7 +156,7 @@ export class ConnectionMonitor {
         // Time's up - terminate call
         this.stop();
       }
-    }, 1000);
+    }, 1000) as any;
   }
 
   private handleReconnection() {

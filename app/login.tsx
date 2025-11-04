@@ -17,9 +17,10 @@ import { parseError, validatePhoneNumber } from '@/utils/errorHandler';
 
 export default function LoginScreen() {
   const router = useRouter();
-  const { login, isLoading } = useUser();
-  const { showError, showSuccess } = useToast();
+  const { login, dummyLogin, isLoading } = useUser();
+  const { showError, showSuccess, showInfo } = useToast();
   const [phoneNumber, setPhoneNumber] = useState('');
+  const [tapCount, setTapCount] = useState(0);
 
   const handleContinue = async () => {
     // Validate phone number
@@ -56,13 +57,40 @@ export default function LoginScreen() {
     }
   };
 
+  const handleLogoTap = async () => {
+    const newCount = tapCount + 1;
+    setTapCount(newCount);
+
+    if (newCount === 5) {
+      // Trigger dummy login
+      showInfo('🔓 Dummy login activated...');
+      try {
+        await dummyLogin();
+        showSuccess('✅ Logged in as Test User (500 coins)');
+        router.replace('/(tabs)');
+      } catch (err) {
+        console.error('Dummy login error:', err);
+        showError('Failed to activate dummy login');
+      }
+      setTapCount(0);
+    } else if (newCount === 3) {
+      // Give user a hint
+      showInfo(`Tap ${5 - newCount} more times for dummy login`);
+    }
+
+    // Reset counter after 2 seconds
+    setTimeout(() => setTapCount(0), 2000);
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.content}>
         {/* Header */}
         <View style={styles.header}>
           <Text style={styles.title}>Welcome to</Text>
-          <Text style={styles.appName}>Connectcall</Text>
+          <TouchableOpacity onPress={handleLogoTap} activeOpacity={0.8}>
+            <Text style={styles.appName}>Connectcall</Text>
+          </TouchableOpacity>
           <Text style={styles.subtitle}>
             Enter your phone number to continue
           </Text>

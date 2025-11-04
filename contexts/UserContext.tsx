@@ -34,6 +34,7 @@ type UserContextType = {
   updateHostStatus: (status: 'none' | 'pending' | 'approved') => Promise<void>;
   updateWallet: (amount: number) => Promise<void>;
   logout: () => Promise<void>;
+  dummyLogin: () => Promise<void>;
 };
 
 const UserContext = createContext<UserContextType | undefined>(undefined);
@@ -238,6 +239,73 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  /**
+   * Dummy Login - For Testing Only
+   * Creates a mock user without backend authentication
+   */
+  const dummyLogin = async () => {
+    setIsLoading(true);
+    try {
+      // Simulate loading delay
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      // Create dummy auth user
+      const dummyAuthUser: Models.User<Models.Preferences> = {
+        $id: 'dummy-user-123',
+        $createdAt: new Date().toISOString(),
+        $updatedAt: new Date().toISOString(),
+        name: 'Test User',
+        email: '',
+        phone: '+919999999999',
+        emailVerification: false,
+        phoneVerification: true,
+        status: true,
+        labels: [],
+        prefs: {},
+        registration: new Date().toISOString(),
+        passwordUpdate: '',
+        accessedAt: new Date().toISOString(),
+        mfa: false,
+        targets: [],
+      };
+
+      // Create dummy user profile
+      const dummyUserProfile: AppwriteUser = {
+        $id: 'dummy-profile-123',
+        $createdAt: new Date().toISOString(),
+        $updatedAt: new Date().toISOString(),
+        $permissions: [],
+        $collectionId: 'users',
+        $databaseId: 'main',
+        $sequence: 0,
+        userId: 'dummy-user-123',
+        name: 'Test User',
+        phone: '+919999999999',
+        gender: 'Male',
+        language: 'English',
+        walletBalance: 500, // Starting balance for testing
+        isHost: false,
+        hostStatus: 'none',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      // Set user state
+      setUser({
+        authUser: dummyAuthUser,
+        userProfile: dummyUserProfile,
+        hostProfile: null,
+      });
+
+      await AsyncStorage.setItem(AUTH_SESSION_KEY, 'dummy_authenticated');
+    } catch (error: any) {
+      console.error('Dummy login error:', error);
+      throw new Error('Dummy login failed');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   return (
     <UserContext.Provider
       value={{
@@ -251,6 +319,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         updateHostStatus,
         updateWallet,
         logout,
+        dummyLogin,
       }}
     >
       {children}

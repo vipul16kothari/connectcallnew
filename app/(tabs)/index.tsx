@@ -10,12 +10,13 @@ import {
   SafeAreaView,
   Dimensions,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Colors } from '@/constants/Colors';
 import { FontSizes } from '@/constants/Fonts';
-import { MOCK_HOSTS, INITIAL_WALLET_BALANCE, PROMO_BANNERS, PromoBanner } from '@/data/mockData';
-import { Host } from '@/types/host';
+import { PROMO_BANNERS, PromoBanner } from '@/data/mockData';
+import { hostService, AppwriteHost } from '@/services/appwrite';
 import { Ionicons } from '@expo/vector-icons';
 import { useUser } from '@/contexts/UserContext';
 import SuperHostBottomSheet from '@/components/SuperHostBottomSheet';
@@ -27,10 +28,14 @@ const BANNER_SPACING = 16;
 export default function HomeScreen() {
   const router = useRouter();
   const { user } = useUser();
-  const [walletBalance] = useState(INITIAL_WALLET_BALANCE);
+  const [hosts, setHosts] = useState<AppwriteHost[]>([]);
+  const [isLoadingHosts, setIsLoadingHosts] = useState(true);
   const [showSuperHostSheet, setShowSuperHostSheet] = useState(false);
   const scrollX = useRef(new Animated.Value(0)).current;
   const fabAnim = useRef(new Animated.Value(1)).current;
+
+  // Wallet balance from user profile
+  const walletBalance = user?.userProfile?.walletBalance || 0;
 
   // Redirect to host dashboard if user is an approved host
   useEffect(() => {
@@ -57,6 +62,40 @@ export default function HomeScreen() {
     ).start();
   }, [fabAnim]);
 
+  // Load hosts from Appwrite
+  useEffect(() => {
+    loadHosts();
+
+    // Subscribe to real-time host updates
+    const unsubscribe = hostService.subscribeToHostUpdates((event) => {
+      if (event.events.includes('databases.*.collections.*.documents.*.update')) {
+        setHosts((currentHosts) =>
+          currentHosts.map((host) =>
+            host.$id === event.payload.$id ? (event.payload as unknown as AppwriteHost) : host
+          )
+        );
+      }
+    });
+
+    return () => {
+      if (unsubscribe) {
+        unsubscribe();
+      }
+    };
+  }, []);
+
+  const loadHosts = async () => {
+    try {
+      setIsLoadingHosts(true);
+      const onlineHosts = await hostService.getOnlineHosts();
+      setHosts(onlineHosts);
+    } catch (error) {
+      console.error('Error loading hosts:', error);
+    } finally {
+      setIsLoadingHosts(false);
+    }
+  };
+
   useEffect(() => {
     // Show SuperHost sheet for female users who haven't applied or aren't hosts
     if (user?.userProfile?.gender === 'Female' && user?.userProfile?.hostStatus === 'none') {
@@ -68,7 +107,12 @@ export default function HomeScreen() {
   }, [user]);
 
   const handleRandomCall = () => {
-    const randomHost = MOCK_HOSTS[Math.floor(Math.random() * MOCK_HOSTS.length)];
+    if (hosts.length === 0) {
+      Alert.alert('No Hosts Available', 'There are no online hosts at the moment.');
+      return;
+    }
+
+    const randomHost = hosts[Math.floor(Math.random() * hosts.length)];
     const isVideo = Math.random() > 0.5;
 
     Alert.alert(
@@ -82,9 +126,9 @@ export default function HomeScreen() {
             router.push({
               pathname: '/calling',
               params: {
-                hostId: randomHost.id,
+                hostId: randomHost.$id,
                 hostName: randomHost.name,
-                hostPicture: randomHost.profilePicture,
+                hostPicture: randomHost.profilePictureUrl,
                 isVideo: isVideo ? '1' : '0',
                 costPerMin: isVideo ? randomHost.videoCostPerMin : randomHost.audioCostPerMin,
               },
@@ -174,16 +218,30 @@ export default function HomeScreen() {
         </View>
 
         {/* Host List */}
-        <FlatList
-          data={MOCK_HOSTS}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item }) => <HostCard host={item} />}
-          contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator={false}
-        />
+        {isLoadingHosts ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color={Colors.primary} />
+            <Text style={styles.loadingText}>Loading hosts...</Text>
+          </View>
+        ) : hosts.length === 0 ? (
+          <View style={styles.emptyContainer}>
+            <Ionicons name="people-outline" size={64} color={Colors.text.secondary} />
+            <Text style={styles.emptyTitle}>No Hosts Online</Text>
+            <Text style={styles.emptySubtitle}>Check back soon!</Text>
+          </View>
+        ) : (
+          <FlatList
+            data={hosts}
+            keyExtractor={(item) => item.$id}
+            renderItem={({ item }) => <HostCard host={item} />}
+            contentContainerStyle={styles.listContent}
+            showsVerticalScrollIndicator={false}
+          />
+        )}
 
         {/* Random Call FAB */}
-        <Animated.View
+        {hosts.length > 0 && (
+          <Animated.View
           style={[
             styles.fabContainer,
             {
@@ -202,6 +260,7 @@ export default function HomeScreen() {
             </View>
           </TouchableOpacity>
         </Animated.View>
+        )}
       </SafeAreaView>
     </View>
   );
@@ -220,7 +279,7 @@ function BannerCard({ banner }: { banner: PromoBanner }) {
   );
 }
 
-function HostCard({ host }: { host: Host }) {
+function HostCard({ host }: { host: AppwriteHost }) {
   const router = useRouter();
   const scaleAnim = useRef(new Animated.Value(1)).current;
 
@@ -242,7 +301,7 @@ function HostCard({ host }: { host: Host }) {
   const handleViewProfile = () => {
     router.push({
       pathname: '/host-profile',
-      params: { hostId: host.id },
+      params: { hostId: host.$id },
     });
   };
 
@@ -250,9 +309,9 @@ function HostCard({ host }: { host: Host }) {
     router.push({
       pathname: '/calling',
       params: {
-        hostId: host.id,
+        hostId: host.$id,
         hostName: host.name,
-        hostPicture: host.profilePicture,
+        hostPicture: host.profilePictureUrl,
         isVideo: isVideo ? '1' : '0',
         costPerMin: isVideo ? host.videoCostPerMin : host.audioCostPerMin,
       },
@@ -270,7 +329,7 @@ function HostCard({ host }: { host: Host }) {
       >
         <View style={styles.cardHeader}>
           <Image
-            source={{ uri: host.profilePicture }}
+            source={{ uri: host.profilePictureUrl }}
             style={styles.profilePicture}
           />
           {host.isOnline && (
@@ -409,6 +468,36 @@ const styles = StyleSheet.create({
     height: 8,
     borderRadius: 4,
     backgroundColor: Colors.primary,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingBottom: 100,
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: FontSizes.base,
+    color: Colors.text.secondary,
+  },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 40,
+    paddingBottom: 100,
+  },
+  emptyTitle: {
+    fontSize: FontSizes.xl,
+    fontWeight: '700',
+    color: Colors.text.primary,
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  emptySubtitle: {
+    fontSize: FontSizes.base,
+    color: Colors.text.secondary,
+    textAlign: 'center',
   },
   listContent: {
     paddingHorizontal: 20,

@@ -37,12 +37,10 @@ export default function ProfileCreationScreen() {
   const [name, setName] = useState('');
   const [selectedGender, setSelectedGender] = useState<'Male' | 'Female' | 'Other' | null>(null);
   const [selectedLanguage, setSelectedLanguage] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
 
   const handleCompleteProfile = async () => {
     if (name.trim() && selectedGender && selectedLanguage && user?.authUser) {
       try {
-        setIsLoading(true);
         await createUserProfile({
           name,
           gender: selectedGender,
@@ -53,8 +51,6 @@ export default function ProfileCreationScreen() {
       } catch (error) {
         console.error('Profile creation error:', error);
         Alert.alert('Error', 'Failed to create profile. Please try again.');
-      } finally {
-        setIsLoading(false);
       }
     }
   };

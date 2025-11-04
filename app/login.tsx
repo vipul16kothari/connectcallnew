@@ -6,69 +6,53 @@ import {
   TextInput,
   TouchableOpacity,
   SafeAreaView,
-  Alert,
   ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Colors } from '@/constants/Colors';
 import { FontSizes } from '@/constants/Fonts';
 import { useUser } from '@/contexts/UserContext';
+import { useToast } from '@/contexts/ToastContext';
+import { parseError, validatePhoneNumber } from '@/utils/errorHandler';
 
 export default function LoginScreen() {
   const router = useRouter();
-  const { login, createAccount, isLoading } = useUser();
+  const { login, isLoading } = useUser();
+  const { showError, showSuccess } = useToast();
   const [phoneNumber, setPhoneNumber] = useState('');
-  const [isNewUser, setIsNewUser] = useState(false);
-  const [name, setName] = useState('');
 
-  const handleSubmit = async () => {
-    if (!phoneNumber || phoneNumber.length < 10) {
-      Alert.alert('Invalid Phone', 'Please enter a valid phone number');
-      return;
-    }
-
-    if (isNewUser && !name.trim()) {
-      Alert.alert('Name Required', 'Please enter your name');
+  const handleContinue = async () => {
+    // Validate phone number
+    const validation = validatePhoneNumber(phoneNumber);
+    if (!validation.valid) {
+      showError(validation.message || 'Invalid phone number');
       return;
     }
 
     try {
-      if (isNewUser) {
-        await createAccount(phoneNumber, name);
-        // After account creation, redirect to profile creation
-        router.replace('/profile-creation');
-      } else {
+      // Try to login first
+      try {
         await login(phoneNumber);
-        // After login, user will be redirected based on profile status
+        showSuccess('Login successful!');
         router.replace('/(tabs)');
+      } catch (loginError: any) {
+        // If account doesn't exist (404), create new account
+        if (loginError.code === 404 || loginError.message?.includes('not found')) {
+          // Prompt for name to create account
+          showError('Account not found. Creating new account...');
+          router.push({
+            pathname: '/profile-creation',
+            params: { phoneNumber },
+          });
+        } else {
+          // Other login errors
+          throw loginError;
+        }
       }
     } catch (error: any) {
       console.error('Authentication error:', error);
-
-      if (error.code === 404 || error.message?.includes('not found')) {
-        Alert.alert(
-          'Account Not Found',
-          'No account found with this phone number. Would you like to create a new account?',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            {
-              text: 'Create Account',
-              onPress: () => setIsNewUser(true),
-            },
-          ]
-        );
-      } else if (error.code === 409 || error.message?.includes('already exists')) {
-        Alert.alert(
-          'Account Exists',
-          'An account with this phone number already exists. Please login instead.',
-          [{ text: 'OK', onPress: () => setIsNewUser(false) }]
-        );
-      } else {
-        Alert.alert(
-          'Authentication Error',
-          error.message || 'Failed to authenticate. Please try again.'
-        );
-      }
+      const appError = parseError(error);
+      showError(appError.message);
     }
   };
 
@@ -80,27 +64,12 @@ export default function LoginScreen() {
           <Text style={styles.title}>Welcome to</Text>
           <Text style={styles.appName}>Connectcall</Text>
           <Text style={styles.subtitle}>
-            {isNewUser ? 'Create your account to get started' : 'Login to continue'}
+            Enter your phone number to continue
           </Text>
         </View>
 
         {/* Form */}
         <View style={styles.form}>
-          {isNewUser && (
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>Full Name</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Enter your name"
-                placeholderTextColor={Colors.text.tertiary}
-                value={name}
-                onChangeText={setName}
-                autoCapitalize="words"
-                editable={!isLoading}
-              />
-            </View>
-          )}
-
           <View style={styles.inputContainer}>
             <Text style={styles.label}>Phone Number</Text>
             <TextInput
@@ -110,46 +79,44 @@ export default function LoginScreen() {
               value={phoneNumber}
               onChangeText={setPhoneNumber}
               keyboardType="phone-pad"
-              maxLength={10}
+              maxLength={15}
               editable={!isLoading}
+              autoFocus
             />
           </View>
 
-          {/* Submit Button */}
+          {/* Continue Button */}
           <TouchableOpacity
             style={[styles.submitButton, isLoading && styles.submitButtonDisabled]}
-            onPress={handleSubmit}
+            onPress={handleContinue}
             activeOpacity={0.8}
             disabled={isLoading}
           >
             {isLoading ? (
               <ActivityIndicator color={Colors.white} />
             ) : (
-              <Text style={styles.submitButtonText}>
-                {isNewUser ? 'Create Account' : 'Login'}
-              </Text>
+              <Text style={styles.submitButtonText}>Continue</Text>
             )}
-          </TouchableOpacity>
-
-          {/* Toggle Login/Signup */}
-          <TouchableOpacity
-            style={styles.toggleButton}
-            onPress={() => setIsNewUser(!isNewUser)}
-            disabled={isLoading}
-          >
-            <Text style={styles.toggleText}>
-              {isNewUser ? 'Already have an account? ' : "Don't have an account? "}
-              <Text style={styles.toggleTextBold}>
-                {isNewUser ? 'Login' : 'Sign Up'}
-              </Text>
-            </Text>
           </TouchableOpacity>
         </View>
 
-        {/* Info */}
+        {/* Legal Info */}
         <View style={styles.infoContainer}>
           <Text style={styles.infoText}>
-            By continuing, you agree to our Terms of Service and Privacy Policy
+            By continuing, you agree to our{' '}
+            <Text
+              style={styles.linkText}
+              onPress={() => router.push('/privacy-policy')}
+            >
+              Terms of Service
+            </Text>{' '}
+            and{' '}
+            <Text
+              style={styles.linkText}
+              onPress={() => router.push('/privacy-policy')}
+            >
+              Privacy Policy
+            </Text>
           </Text>
         </View>
       </View>
@@ -223,18 +190,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: Colors.white,
   },
-  toggleButton: {
-    marginTop: 20,
-    alignItems: 'center',
-  },
-  toggleText: {
-    fontSize: FontSizes.sm,
-    color: Colors.text.secondary,
-  },
-  toggleTextBold: {
-    fontWeight: '700',
-    color: Colors.primary,
-  },
   infoContainer: {
     paddingHorizontal: 20,
   },
@@ -242,6 +197,12 @@ const styles = StyleSheet.create({
     fontSize: FontSizes.xs,
     color: Colors.text.tertiary,
     textAlign: 'center',
-    lineHeight: 18,
+    lineHeight: 20,
+  },
+  linkText: {
+    fontSize: FontSizes.xs,
+    color: Colors.primary,
+    fontWeight: '600',
+    textDecorationLine: 'underline',
   },
 });

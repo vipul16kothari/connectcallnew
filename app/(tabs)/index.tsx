@@ -9,7 +9,6 @@ import {
   Animated,
   SafeAreaView,
   Dimensions,
-  Alert,
   ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -19,6 +18,8 @@ import { PROMO_BANNERS, PromoBanner } from '@/data/mockData';
 import { hostService, AppwriteHost } from '@/services/appwrite';
 import { Ionicons } from '@expo/vector-icons';
 import { useUser } from '@/contexts/UserContext';
+import { useToast } from '@/contexts/ToastContext';
+import { parseError } from '@/utils/errorHandler';
 import SuperHostBottomSheet from '@/components/SuperHostBottomSheet';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -28,6 +29,7 @@ const BANNER_SPACING = 16;
 export default function HomeScreen() {
   const router = useRouter();
   const { user } = useUser();
+  const { showError, showWarning } = useToast();
   const [hosts, setHosts] = useState<AppwriteHost[]>([]);
   const [isLoadingHosts, setIsLoadingHosts] = useState(true);
   const [showSuperHostSheet, setShowSuperHostSheet] = useState(false);
@@ -82,6 +84,7 @@ export default function HomeScreen() {
         unsubscribe();
       }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadHosts = async () => {
@@ -89,8 +92,10 @@ export default function HomeScreen() {
       setIsLoadingHosts(true);
       const onlineHosts = await hostService.getOnlineHosts();
       setHosts(onlineHosts);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error loading hosts:', error);
+      const appError = parseError(error);
+      showError(appError.message);
     } finally {
       setIsLoadingHosts(false);
     }
@@ -108,35 +113,28 @@ export default function HomeScreen() {
 
   const handleRandomCall = () => {
     if (hosts.length === 0) {
-      Alert.alert('No Hosts Available', 'There are no online hosts at the moment.');
+      showWarning('No hosts are currently online. Please try again later.');
       return;
     }
 
-    const randomHost = hosts[Math.floor(Math.random() * hosts.length)];
-    const isVideo = Math.random() > 0.5;
+    try {
+      const randomHost = hosts[Math.floor(Math.random() * hosts.length)];
+      const isVideo = Math.random() > 0.5;
 
-    Alert.alert(
-      'Random Call',
-      `Connecting you with ${randomHost.name} for a ${isVideo ? 'video' : 'audio'} call...`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Connect',
-          onPress: () => {
-            router.push({
-              pathname: '/calling',
-              params: {
-                hostId: randomHost.$id,
-                hostName: randomHost.name,
-                hostPicture: randomHost.profilePictureUrl,
-                isVideo: isVideo ? '1' : '0',
-                costPerMin: isVideo ? randomHost.videoCostPerMin : randomHost.audioCostPerMin,
-              },
-            });
-          },
+      router.push({
+        pathname: '/calling',
+        params: {
+          hostId: randomHost.$id,
+          hostName: randomHost.name,
+          hostPicture: randomHost.profilePictureUrl,
+          isVideo: isVideo ? '1' : '0',
+          costPerMin: isVideo ? randomHost.videoCostPerMin : randomHost.audioCostPerMin,
         },
-      ]
-    );
+      });
+    } catch (error: any) {
+      console.error('Error starting random call:', error);
+      showError('Failed to start call. Please try again.');
+    }
   };
 
   return (

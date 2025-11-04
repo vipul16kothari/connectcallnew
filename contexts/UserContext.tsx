@@ -88,25 +88,30 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   };
 
   const login = async (phoneNumber: string) => {
+    setIsLoading(true);
     try {
-      setIsLoading(true);
       const session = await authService.createPhoneSession(phoneNumber);
       const authUser = await authService.getCurrentUser();
 
       if (authUser) {
         await loadUserData(authUser);
+      } else {
+        throw new Error('Failed to get user after login');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Login error:', error);
-      throw error;
+      // Re-throw with additional context
+      const enhancedError = new Error(error.message || 'Login failed');
+      (enhancedError as any).code = error.code;
+      throw enhancedError;
     } finally {
       setIsLoading(false);
     }
   };
 
   const createAccount = async (phoneNumber: string, name: string) => {
+    setIsLoading(true);
     try {
-      setIsLoading(true);
       const authUser = await authService.createAccount(phoneNumber, name);
 
       // Create session
@@ -114,9 +119,12 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
       // Set auth user (profile will be created in next step)
       setUser({ authUser, userProfile: null, hostProfile: null });
-    } catch (error) {
+    } catch (error: any) {
       console.error('Create account error:', error);
-      throw error;
+      // Re-throw with additional context
+      const enhancedError = new Error(error.message || 'Account creation failed');
+      (enhancedError as any).code = error.code;
+      throw enhancedError;
     } finally {
       setIsLoading(false);
     }
@@ -128,21 +136,23 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     gender: 'Male' | 'Female' | 'Other';
     language: string;
   }) => {
-    try {
-      if (!user?.authUser) {
-        throw new Error('No authenticated user');
-      }
+    if (!user?.authUser) {
+      throw new Error('No authenticated user. Please login first.');
+    }
 
-      setIsLoading(true);
+    setIsLoading(true);
+    try {
       const userProfile = await userService.createUserProfile(user.authUser.$id, data);
 
       setUser({
         ...user,
         userProfile,
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error('Create profile error:', error);
-      throw error;
+      const enhancedError = new Error(error.message || 'Failed to create profile');
+      (enhancedError as any).code = error.code;
+      throw enhancedError;
     } finally {
       setIsLoading(false);
     }
@@ -170,11 +180,11 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   };
 
   const updateHostStatus = async (status: 'none' | 'pending' | 'approved') => {
-    try {
-      if (!user?.userProfile) {
-        throw new Error('No user profile');
-      }
+    if (!user?.userProfile) {
+      throw new Error('No user profile found');
+    }
 
+    try {
       const updatedProfile = await userService.updateUserProfile(user.userProfile.$id, {
         hostStatus: status,
         isHost: status === 'approved',
@@ -184,18 +194,20 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         ...user,
         userProfile: updatedProfile,
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error updating host status:', error);
-      throw error;
+      const enhancedError = new Error(error.message || 'Failed to update host status');
+      (enhancedError as any).code = error.code;
+      throw enhancedError;
     }
   };
 
   const updateWallet = async (amount: number) => {
-    try {
-      if (!user?.userProfile) {
-        throw new Error('No user profile');
-      }
+    if (!user?.userProfile) {
+      throw new Error('No user profile found');
+    }
 
+    try {
       const updatedProfile = await userService.updateWalletBalance(
         user.userProfile.$id,
         amount
@@ -205,9 +217,11 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         ...user,
         userProfile: updatedProfile,
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error updating wallet:', error);
-      throw error;
+      const enhancedError = new Error(error.message || 'Failed to update wallet');
+      (enhancedError as any).code = error.code;
+      throw enhancedError;
     }
   };
 
@@ -216,9 +230,11 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       await authService.logout();
       await AsyncStorage.removeItem(AUTH_SESSION_KEY);
       setUser(null);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Logout error:', error);
-      throw error;
+      const enhancedError = new Error(error.message || 'Logout failed');
+      (enhancedError as any).code = error.code;
+      throw enhancedError;
     }
   };
 

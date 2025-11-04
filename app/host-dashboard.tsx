@@ -13,6 +13,10 @@ import { useRouter } from 'expo-router';
 import { Colors } from '@/constants/Colors';
 import { FontSizes } from '@/constants/Fonts';
 import { Ionicons } from '@expo/vector-icons';
+import { useToast } from '@/contexts/ToastContext';
+import { useUser } from '@/contexts/UserContext';
+import { hostService } from '@/services/appwrite';
+import { parseError } from '@/utils/errorHandler';
 import HostIncomingCall from '@/components/HostIncomingCall';
 
 // Mock data
@@ -21,9 +25,12 @@ const MOCK_TOTAL_EARNINGS = 12850;
 
 export default function HostDashboardScreen() {
   const router = useRouter();
+  const { user } = useUser();
+  const { showError, showSuccess } = useToast();
   const [audioOnline, setAudioOnline] = useState(false);
   const [videoOnline, setVideoOnline] = useState(false);
   const [showIncomingCall, setShowIncomingCall] = useState(false);
+  const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
@@ -71,6 +78,54 @@ export default function HostDashboardScreen() {
 
   const handleRejectCall = () => {
     setShowIncomingCall(false);
+  };
+
+  const handleToggleAudioOnline = async (value: boolean) => {
+    if (isUpdatingStatus) return;
+
+    if (!user?.hostProfile) {
+      showError('Host profile not found');
+      return;
+    }
+
+    try {
+      setIsUpdatingStatus(true);
+      setAudioOnline(value);
+      await hostService.updateOnlineStatus(user.hostProfile.$id, value || videoOnline);
+      showSuccess(value ? 'You are now online for audio calls' : 'Audio calls disabled');
+    } catch (error: any) {
+      console.error('Error updating audio status:', error);
+      const appError = parseError(error);
+      showError(appError.message);
+      // Revert on error
+      setAudioOnline(!value);
+    } finally {
+      setIsUpdatingStatus(false);
+    }
+  };
+
+  const handleToggleVideoOnline = async (value: boolean) => {
+    if (isUpdatingStatus) return;
+
+    if (!user?.hostProfile) {
+      showError('Host profile not found');
+      return;
+    }
+
+    try {
+      setIsUpdatingStatus(true);
+      setVideoOnline(value);
+      await hostService.updateOnlineStatus(user.hostProfile.$id, value || audioOnline);
+      showSuccess(value ? 'You are now online for video calls' : 'Video calls disabled');
+    } catch (error: any) {
+      console.error('Error updating video status:', error);
+      const appError = parseError(error);
+      showError(appError.message);
+      // Revert on error
+      setVideoOnline(!value);
+    } finally {
+      setIsUpdatingStatus(false);
+    }
   };
 
   return (
@@ -132,7 +187,8 @@ export default function HostDashboardScreen() {
               sublabel="Accept voice-only calls"
               icon="call"
               value={audioOnline}
-              onValueChange={setAudioOnline}
+              onValueChange={handleToggleAudioOnline}
+              disabled={isUpdatingStatus}
             />
           </Animated.View>
 
@@ -142,7 +198,8 @@ export default function HostDashboardScreen() {
               sublabel="Accept video calls"
               icon="videocam"
               value={videoOnline}
-              onValueChange={setVideoOnline}
+              onValueChange={handleToggleVideoOnline}
+              disabled={isUpdatingStatus}
             />
           </Animated.View>
         </View>
@@ -217,12 +274,14 @@ function OnlineToggle({
   icon,
   value,
   onValueChange,
+  disabled,
 }: {
   label: string;
   sublabel: string;
   icon: any;
   value: boolean;
   onValueChange: (value: boolean) => void;
+  disabled?: boolean;
 }) {
   return (
     <View style={[styles.toggleCard, value && styles.toggleCardActive]}>
@@ -241,6 +300,7 @@ function OnlineToggle({
         trackColor={{ false: Colors.border, true: Colors.secondary }}
         thumbColor={Colors.white}
         ios_backgroundColor={Colors.border}
+        disabled={disabled}
       />
     </View>
   );

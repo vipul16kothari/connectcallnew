@@ -5,7 +5,6 @@ import {
   TouchableOpacity,
   ScrollView,
   SafeAreaView,
-  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Colors } from '@/constants/Colors';
@@ -13,16 +12,21 @@ import { FontSizes } from '@/constants/Fonts';
 import { COIN_PACKAGES, INITIAL_WALLET_BALANCE } from '@/data/mockData';
 import { CoinPackage } from '@/types/host';
 import { Ionicons } from '@expo/vector-icons';
+import { useToast } from '@/contexts/ToastContext';
 
 export default function WalletScreen() {
   const router = useRouter();
+  const { showInfo } = useToast();
 
   const handlePurchase = (coinPackage: CoinPackage) => {
-    Alert.alert(
-      'Purchase Coins',
-      `Payment functionality is not yet implemented.\n\nYou attempted to purchase ${coinPackage.coins} coins for ${coinPackage.price}.`,
-      [{ text: 'OK' }]
-    );
+    try {
+      // TODO: Implement actual payment functionality
+      showInfo(
+        `Payment integration coming soon! Package: ${coinPackage.coins} coins for ${coinPackage.price}`
+      );
+    } catch (error) {
+      console.error('Purchase error:', error);
+    }
   };
 
   return (

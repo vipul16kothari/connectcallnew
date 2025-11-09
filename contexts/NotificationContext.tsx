@@ -26,81 +26,94 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   const [incomingCall, setIncomingCall] = useState<IncomingCallData | null>(null);
 
   useEffect(() => {
-    // Set up notification listeners
-    notificationService.setupNotificationListeners(
-      // Handler for when notification is received (app in foreground)
-      (notification) => {
-        console.log('📱 Notification received in foreground:', notification);
-        const data = notification.request.content.data;
+    // Set up notification listeners (safe to call even without permissions)
+    try {
+      notificationService.setupNotificationListeners(
+        // Handler for when notification is received (app in foreground)
+        (notification) => {
+          console.log('📱 Notification received in foreground:', notification);
+          const data = notification.request.content.data;
 
-        if (data.type === 'incoming-call') {
-          // App is in foreground, show the incoming call UI directly
-          // Don't show system notification - just update state
-          setIncomingCall({
-            callerId: data.callerId as string,
-            callerName: data.callerName as string,
-            callerPicture: data.callerPicture as string,
-            callType: data.callType as 'audio' | 'video',
-            callId: data.callId as string,
-          });
-        }
-      },
-
-      // Handler for when notification is tapped (app in background/closed)
-      (response) => {
-        console.log('📱 Notification tapped:', response);
-        const data = response.notification.request.content.data;
-
-        if (data.type === 'incoming-call') {
-          // Navigate to host calling screen (incoming call)
-          router.push({
-            pathname: '/host-calling',
-            params: {
+          if (data.type === 'incoming-call') {
+            // App is in foreground, show the incoming call UI directly
+            // Don't show system notification - just update state
+            setIncomingCall({
+              callerId: data.callerId as string,
               callerName: data.callerName as string,
               callerPicture: data.callerPicture as string,
-              isVideo: data.callType === 'video' ? '1' : '0',
-              ratePerMin: '10', // Default rate
+              callType: data.callType as 'audio' | 'video',
               callId: data.callId as string,
-            },
-          });
-        }
-      }
-    );
+            });
+          }
+        },
 
-    // Check for notification that launched the app
-    notificationService.getLastNotificationResponse().then((response) => {
-      if (response) {
-        console.log('📱 App launched from notification:', response);
-        const data = response.notification.request.content.data;
+        // Handler for when notification is tapped (app in background/closed)
+        (response) => {
+          console.log('📱 Notification tapped:', response);
+          const data = response.notification.request.content.data;
 
-        if (data.type === 'incoming-call') {
-          // Navigate to host calling screen
-          setTimeout(() => {
+          if (data.type === 'incoming-call') {
+            // Navigate to host calling screen (incoming call)
             router.push({
               pathname: '/host-calling',
               params: {
                 callerName: data.callerName as string,
                 callerPicture: data.callerPicture as string,
                 isVideo: data.callType === 'video' ? '1' : '0',
-                ratePerMin: '10',
+                ratePerMin: '10', // Default rate
                 callId: data.callId as string,
               },
             });
-          }, 500);
+          }
         }
-      }
-    });
+      );
 
-    // Listen for app state changes (foreground/background)
-    const subscription = AppState.addEventListener('change', (nextAppState) => {
-      console.log('📱 App state changed:', nextAppState);
-    });
+      // Check for notification that launched the app
+      notificationService.getLastNotificationResponse().then((response) => {
+        if (response) {
+          console.log('📱 App launched from notification:', response);
+          const data = response.notification.request.content.data;
 
-    // Cleanup listeners on unmount
-    return () => {
-      notificationService.removeNotificationListeners();
-      subscription.remove();
-    };
+          if (data.type === 'incoming-call') {
+            // Navigate to host calling screen
+            setTimeout(() => {
+              router.push({
+                pathname: '/host-calling',
+                params: {
+                  callerName: data.callerName as string,
+                  callerPicture: data.callerPicture as string,
+                  isVideo: data.callType === 'video' ? '1' : '0',
+                  ratePerMin: '10',
+                  callId: data.callId as string,
+                },
+              });
+            }, 500);
+          }
+        }
+      }).catch((error) => {
+        console.error('Error checking last notification:', error);
+      });
+
+      // Listen for app state changes (foreground/background)
+      const subscription = AppState.addEventListener('change', (nextAppState) => {
+        console.log('📱 App state changed:', nextAppState);
+      });
+
+      // Cleanup listeners on unmount
+      return () => {
+        try {
+          notificationService.removeNotificationListeners();
+          subscription.remove();
+        } catch (error) {
+          console.error('Error cleaning up notification listeners:', error);
+        }
+      };
+    } catch (error) {
+      console.error('Error setting up notification listeners:', error);
+      // Continue without notifications rather than crashing
+      // Return empty cleanup function
+      return () => {};
+    }
   }, [router]);
 
   const clearIncomingCall = () => {
@@ -110,18 +123,25 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   const sendIncomingCallNotification = async (
     callData: IncomingCallData
   ): Promise<string | null> => {
-    // Check if app is in foreground
-    const appState = AppState.currentState;
+    try {
+      // Check if app is in foreground
+      const appState = AppState.currentState;
 
-    if (appState === 'active') {
-      // App is in foreground - show incoming call UI directly
-      console.log('📱 App in foreground, showing incoming call UI directly');
+      if (appState === 'active') {
+        // App is in foreground - show incoming call UI directly
+        console.log('📱 App in foreground, showing incoming call UI directly');
+        setIncomingCall(callData);
+        return null;
+      } else {
+        // App is in background/closed - send notification
+        console.log('📱 App in background, sending notification');
+        return await notificationService.sendIncomingCallNotification(callData);
+      }
+    } catch (error) {
+      console.error('Error sending incoming call notification:', error);
+      // Fallback: show UI directly even if notification fails
       setIncomingCall(callData);
       return null;
-    } else {
-      // App is in background/closed - send notification
-      console.log('📱 App in background, sending notification');
-      return await notificationService.sendIncomingCallNotification(callData);
     }
   };
 

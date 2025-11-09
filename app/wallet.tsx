@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import {
   View,
   Text,
@@ -5,20 +6,99 @@ import {
   TouchableOpacity,
   ScrollView,
   SafeAreaView,
+  Animated,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Colors } from '@/constants/Colors';
 import { FontSizes } from '@/constants/Fonts';
-import { COIN_PACKAGES, INITIAL_WALLET_BALANCE } from '@/data/mockData';
-import { CoinPackage } from '@/types/host';
+import { INITIAL_WALLET_BALANCE } from '@/data/mockData';
+import { ENHANCED_COIN_PACKAGES, EnhancedCoinPackage } from '@/data/coinPackages';
 import { Ionicons } from '@expo/vector-icons';
 import { useToast } from '@/contexts/ToastContext';
+import { useUser } from '@/contexts/UserContext';
+
+interface CoinPackageCardProps {
+  package: EnhancedCoinPackage;
+  onPress: () => void;
+}
+
+function CoinPackageCard({ package: pkg, onPress }: CoinPackageCardProps) {
+  const scaleAnim = useRef(new Animated.Value(1)).current;
+
+  const handlePressIn = () => {
+    Animated.spring(scaleAnim, {
+      toValue: 0.95,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const handlePressOut = () => {
+    Animated.spring(scaleAnim, {
+      toValue: 1,
+      friction: 3,
+      tension: 40,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  return (
+    <TouchableOpacity
+      activeOpacity={0.9}
+      onPress={onPress}
+      onPressIn={handlePressIn}
+      onPressOut={handlePressOut}
+      style={styles.packageCardTouchable}
+    >
+      <Animated.View
+        style={[
+          styles.packageCard,
+          pkg.popular && styles.packageCardPopular,
+          { transform: [{ scale: scaleAnim }] },
+        ]}
+      >
+        {/* Tag */}
+        {pkg.tag && (
+          <View style={[styles.packageTag, pkg.popular && styles.packageTagPopular]}>
+            <Text style={styles.packageTagText}>
+              {pkg.tagEmoji} {pkg.tag}
+            </Text>
+          </View>
+        )}
+
+        {/* Coin Amount */}
+        <View style={styles.packageCoinContainer}>
+          <Text style={styles.packageCoinIcon}>💰</Text>
+          <Text style={styles.packageCoinAmount}>{pkg.coins}</Text>
+          <Text style={styles.packageCoinLabel}>coins</Text>
+        </View>
+
+        {/* Pricing */}
+        <View style={styles.packagePricing}>
+          {pkg.originalPrice && (
+            <Text style={styles.packageOriginalPrice}>{pkg.originalPrice}</Text>
+          )}
+          <Text style={[styles.packagePrice, pkg.popular && styles.packagePricePopular]}>
+            {pkg.price}
+          </Text>
+          {pkg.discount && (
+            <View style={styles.packageDiscountBadge}>
+              <Text style={styles.packageDiscountText}>{pkg.discount}% OFF</Text>
+            </View>
+          )}
+        </View>
+      </Animated.View>
+    </TouchableOpacity>
+  );
+}
 
 export default function WalletScreen() {
   const router = useRouter();
   const { showInfo } = useToast();
+  const { user } = useUser();
 
-  const handlePurchase = (coinPackage: CoinPackage) => {
+  const currentBalance = user?.userProfile?.walletBalance || INITIAL_WALLET_BALANCE;
+
+  const handlePurchase = (coinPackage: EnhancedCoinPackage) => {
     try {
       // TODO: Implement actual payment functionality
       showInfo(
@@ -55,76 +135,43 @@ export default function WalletScreen() {
             <Text style={styles.balanceIcon}>💰</Text>
           </View>
           <Text style={styles.balanceLabel}>Current Balance</Text>
-          <Text style={styles.balanceAmount}>{INITIAL_WALLET_BALANCE}</Text>
+          <Text style={styles.balanceAmount}>{currentBalance}</Text>
           <Text style={styles.balanceSubtext}>coins</Text>
         </View>
 
         {/* Packages Section */}
         <View style={styles.packagesSection}>
-          <Text style={styles.sectionTitle}>Top-Up Packages</Text>
-          <Text style={styles.sectionSubtitle}>
-            Choose a package to add coins to your wallet
-          </Text>
-
-          {COIN_PACKAGES.map((pkg) => (
-            <View key={pkg.id} style={styles.packageWrapper}>
-              {pkg.popular && (
-                <View style={styles.popularBadge}>
-                  <Text style={styles.popularText}>MOST POPULAR</Text>
-                </View>
-              )}
-              <View
-                style={[
-                  styles.packageCard,
-                  pkg.popular && styles.packageCardPopular,
-                ]}
-              >
-                <View style={styles.packageInfo}>
-                  <View style={styles.packageHeader}>
-                    <Text style={styles.packageCoins}>{pkg.coins}</Text>
-                    <Text style={styles.packageCoinsLabel}>coins</Text>
-                  </View>
-                  <Text style={styles.packagePrice}>{pkg.price}</Text>
-                </View>
-                <TouchableOpacity
-                  style={[
-                    styles.purchaseButton,
-                    pkg.popular && styles.purchaseButtonPopular,
-                  ]}
-                  onPress={() => handlePurchase(pkg)}
-                  activeOpacity={0.8}
-                >
-                  <Text
-                    style={[
-                      styles.purchaseButtonText,
-                      pkg.popular && styles.purchaseButtonTextPopular,
-                    ]}
-                  >
-                    Purchase
-                  </Text>
-                  <Ionicons
-                    name="arrow-forward"
-                    size={18}
-                    color={pkg.popular ? Colors.white : Colors.accent}
-                  />
-                </TouchableOpacity>
-              </View>
+          <View style={styles.sectionHeader}>
+            <View>
+              <Text style={styles.sectionTitle}>Choose Your Package</Text>
+              <Text style={styles.sectionSubtitle}>All packages include instant delivery</Text>
             </View>
-          ))}
+            <View style={styles.flashSaleBadge}>
+              <Ionicons name="flash" size={16} color={Colors.warning} />
+              <Text style={styles.flashSaleText}>50% OFF</Text>
+            </View>
+          </View>
+
+          {/* 3x4 Grid */}
+          <View style={styles.packagesGrid}>
+            {ENHANCED_COIN_PACKAGES.map((pkg) => (
+              <CoinPackageCard key={pkg.id} package={pkg} onPress={() => handlePurchase(pkg)} />
+            ))}
+          </View>
         </View>
 
         {/* Info Section */}
         <View style={styles.infoSection}>
           <View style={styles.infoItem}>
-            <Ionicons name="shield-checkmark" size={24} color={Colors.accent} />
+            <Ionicons name="shield-checkmark" size={24} color={Colors.secondary} />
             <Text style={styles.infoText}>Secure payment processing</Text>
           </View>
           <View style={styles.infoItem}>
-            <Ionicons name="time" size={24} color={Colors.accent} />
+            <Ionicons name="flash" size={24} color={Colors.secondary} />
             <Text style={styles.infoText}>Instant coin delivery</Text>
           </View>
           <View style={styles.infoItem}>
-            <Ionicons name="help-circle" size={24} color={Colors.accent} />
+            <Ionicons name="headset" size={24} color={Colors.secondary} />
             <Text style={styles.infoText}>24/7 support available</Text>
           </View>
         </View>
@@ -167,144 +214,183 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    paddingHorizontal: 20,
-    paddingTop: 24,
+    paddingHorizontal: 16,
+    paddingTop: 20,
     paddingBottom: 32,
   },
   balanceCard: {
-    backgroundColor: Colors.accent,
-    borderRadius: 20,
-    padding: 32,
+    backgroundColor: Colors.primary,
+    borderRadius: 24,
+    padding: 28,
     alignItems: 'center',
-    marginBottom: 32,
-    shadowColor: Colors.accent,
+    marginBottom: 28,
+    shadowColor: Colors.primary,
     shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.3,
+    shadowOpacity: 0.4,
     shadowRadius: 16,
-    elevation: 8,
+    elevation: 12,
   },
   balanceIconContainer: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
+    width: 72,
+    height: 72,
+    borderRadius: 36,
     backgroundColor: 'rgba(255, 255, 255, 0.2)',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 12,
   },
   balanceIcon: {
-    fontSize: 40,
+    fontSize: 36,
   },
   balanceLabel: {
-    fontSize: FontSizes.base,
+    fontSize: FontSizes.sm,
     color: Colors.white,
     opacity: 0.9,
-    marginBottom: 8,
+    marginBottom: 6,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
   },
   balanceAmount: {
-    fontSize: 56,
+    fontSize: 48,
     fontWeight: '800',
     color: Colors.white,
     marginBottom: 4,
   },
   balanceSubtext: {
-    fontSize: FontSizes.lg,
+    fontSize: FontSizes.base,
     color: Colors.white,
     opacity: 0.8,
   },
   packagesSection: {
-    marginBottom: 32,
+    marginBottom: 28,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 20,
   },
   sectionTitle: {
     fontSize: FontSizes.xl,
-    fontWeight: '700',
+    fontWeight: '800',
     color: Colors.text.primary,
-    marginBottom: 8,
+    marginBottom: 4,
   },
   sectionSubtitle: {
     fontSize: FontSizes.sm,
     color: Colors.text.secondary,
-    marginBottom: 20,
   },
-  packageWrapper: {
-    marginBottom: 16,
-    position: 'relative',
-  },
-  popularBadge: {
-    position: 'absolute',
-    top: -8,
-    left: 16,
-    zIndex: 10,
-    backgroundColor: Colors.secondary,
+  flashSaleBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 184, 0, 0.2)',
     paddingHorizontal: 12,
-    paddingVertical: 4,
+    paddingVertical: 6,
     borderRadius: 12,
+    gap: 4,
+    borderWidth: 1,
+    borderColor: Colors.warning,
   },
-  popularText: {
+  flashSaleText: {
     fontSize: FontSizes.xs,
-    fontWeight: '700',
-    color: Colors.white,
+    fontWeight: '800',
+    color: Colors.warning,
     letterSpacing: 0.5,
+  },
+  packagesGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  packageCardTouchable: {
+    width: '31.5%', // 3 columns with gaps
   },
   packageCard: {
     backgroundColor: Colors.surface,
     borderRadius: 16,
-    padding: 20,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    padding: 12,
     alignItems: 'center',
     borderWidth: 2,
     borderColor: Colors.border,
+    minHeight: 160,
+    justifyContent: 'space-between',
   },
   packageCardPopular: {
     borderColor: Colors.accent,
     borderWidth: 2,
+    backgroundColor: 'rgba(167, 125, 255, 0.08)',
   },
-  packageInfo: {
-    flex: 1,
+  packageTag: {
+    position: 'absolute',
+    top: -8,
+    left: 0,
+    right: 0,
+    backgroundColor: Colors.secondary,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 8,
+    alignItems: 'center',
+    zIndex: 10,
   },
-  packageHeader: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
+  packageTagPopular: {
+    backgroundColor: Colors.accent,
+  },
+  packageTagText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: Colors.white,
+    textAlign: 'center',
+  },
+  packageCoinContainer: {
+    alignItems: 'center',
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  packageCoinIcon: {
+    fontSize: 28,
     marginBottom: 4,
   },
-  packageCoins: {
-    fontSize: FontSizes['3xl'],
+  packageCoinAmount: {
+    fontSize: FontSizes.xl,
     fontWeight: '800',
     color: Colors.text.primary,
-    marginRight: 6,
   },
-  packageCoinsLabel: {
-    fontSize: FontSizes.base,
+  packageCoinLabel: {
+    fontSize: 10,
     color: Colors.text.secondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  packagePricing: {
+    alignItems: 'center',
+    width: '100%',
+  },
+  packageOriginalPrice: {
+    fontSize: FontSizes.xs,
+    color: Colors.text.secondary,
+    textDecorationLine: 'line-through',
+    marginBottom: 2,
   },
   packagePrice: {
-    fontSize: FontSizes.xl,
-    fontWeight: '600',
-    color: Colors.accent,
-  },
-  purchaseButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.surfaceLight,
-    borderWidth: 2,
-    borderColor: Colors.accent,
-    borderRadius: 12,
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    gap: 6,
-  },
-  purchaseButtonPopular: {
-    backgroundColor: Colors.accent,
-    borderColor: Colors.accent,
-  },
-  purchaseButtonText: {
-    fontSize: FontSizes.base,
+    fontSize: FontSizes.lg,
     fontWeight: '700',
     color: Colors.accent,
+    marginBottom: 4,
   },
-  purchaseButtonTextPopular: {
+  packagePricePopular: {
+    color: Colors.accent,
+  },
+  packageDiscountBadge: {
+    backgroundColor: Colors.error,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  packageDiscountText: {
+    fontSize: 9,
+    fontWeight: '800',
     color: Colors.white,
+    letterSpacing: 0.5,
   },
   infoSection: {
     backgroundColor: Colors.surface,
@@ -320,7 +406,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   infoText: {
-    fontSize: FontSizes.base,
+    fontSize: FontSizes.sm,
     color: Colors.text.secondary,
     flex: 1,
   },

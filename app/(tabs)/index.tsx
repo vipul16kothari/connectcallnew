@@ -22,6 +22,8 @@ import { useToast } from '@/contexts/ToastContext';
 import { parseError } from '@/utils/errorHandler';
 import SuperHostBottomSheet from '@/components/SuperHostBottomSheet';
 import { isDummyMode, getDummyHosts } from '@/data/dummyData';
+import LowBalanceOfferModal from '@/components/LowBalanceOfferModal';
+import LowBalanceBottomSheet from '@/components/LowBalanceBottomSheet';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const BANNER_WIDTH = SCREEN_WIDTH - 40;
@@ -40,12 +42,61 @@ export default function HomeScreen() {
   // Wallet balance from user profile
   const walletBalance = user?.userProfile?.walletBalance || 0;
 
+  // Low balance offer system
+  const VIDEO_CALL_MIN_COST = 60; // Minimum coins for 1 minute of video call
+  const isLowBalance = walletBalance < VIDEO_CALL_MIN_COST;
+  const [showOfferModal, setShowOfferModal] = useState(false);
+  const [showOfferBottomSheet, setShowOfferBottomSheet] = useState(false);
+  const [offerTimeRemaining, setOfferTimeRemaining] = useState(300); // 5 minutes
+  const hasShownOfferRef = useRef(false);
+
   // Redirect to host dashboard if user is an approved host
   useEffect(() => {
     if (user?.userProfile?.isHost && user?.userProfile?.hostStatus === 'approved') {
       router.replace('/host-dashboard');
     }
   }, [user, router]);
+
+  // Low balance offer trigger
+  useEffect(() => {
+    if (isLowBalance && !hasShownOfferRef.current && user?.authUser) {
+      // Show offer modal after a short delay
+      const timer = setTimeout(() => {
+        setShowOfferModal(true);
+        hasShownOfferRef.current = true;
+      }, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [isLowBalance, user]);
+
+  // Countdown timer for offer
+  useEffect(() => {
+    if ((showOfferModal || showOfferBottomSheet) && offerTimeRemaining > 0) {
+      const timer = setInterval(() => {
+        setOfferTimeRemaining((prev) => Math.max(0, prev - 1));
+      }, 1000);
+      return () => clearInterval(timer);
+    }
+  }, [showOfferModal, showOfferBottomSheet, offerTimeRemaining]);
+
+  const handleAcceptOffer = () => {
+    setShowOfferModal(false);
+    setShowOfferBottomSheet(false);
+    // Navigate to wallet screen with pre-selected package
+    router.push('/wallet');
+  };
+
+  const handleDismissOfferModal = () => {
+    setShowOfferModal(false);
+    // Show bottom sheet after dismissing modal
+    setTimeout(() => {
+      setShowOfferBottomSheet(true);
+    }, 500);
+  };
+
+  const handleDismissBottomSheet = () => {
+    setShowOfferBottomSheet(false);
+  };
 
   useEffect(() => {
     // Floating animation for FAB
@@ -162,6 +213,22 @@ export default function HomeScreen() {
         visible={showSuperHostSheet}
         onClose={() => setShowSuperHostSheet(false)}
       />
+
+      {/* Low Balance Offer Modal */}
+      <LowBalanceOfferModal
+        visible={showOfferModal}
+        onAccept={handleAcceptOffer}
+        onDismiss={handleDismissOfferModal}
+      />
+
+      {/* Low Balance Bottom Sheet */}
+      <LowBalanceBottomSheet
+        visible={showOfferBottomSheet}
+        timeRemaining={offerTimeRemaining}
+        onAccept={handleAcceptOffer}
+        onDismiss={handleDismissBottomSheet}
+      />
+
       <SafeAreaView style={styles.safeArea}>
         {/* Header */}
         <View style={styles.header}>

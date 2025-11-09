@@ -22,9 +22,15 @@ export default function HostCallingScreen() {
   const [cameraFlipped, setCameraFlipped] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const [earnings, setEarnings] = useState(0);
+  const [currentCallType, setCurrentCallType] = useState<'audio' | 'video'>(
+    isVideo === '1' ? 'video' : 'audio'
+  );
+  const [showUpgradeRequest, setShowUpgradeRequest] = useState(false);
+  const [upgradeTimeoutRemaining, setUpgradeTimeoutRemaining] = useState(15);
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const earningsAnim = useRef(new Animated.Value(1)).current;
+  const bannerSlideAnim = useRef(new Animated.Value(-200)).current;
   const prevEarnings = useRef(0);
 
   useEffect(() => {
@@ -47,7 +53,7 @@ export default function HostCallingScreen() {
 
   // Calculate earnings in real-time
   useEffect(() => {
-    const rate = parseFloat(ratePerMin as string) || 10;
+    const rate = currentCallType === 'video' ? 60 : (parseFloat(ratePerMin as string) || 10);
     const currentEarnings = Math.floor((seconds / 60) * rate * 10) / 10; // Round to 1 decimal
 
     if (currentEarnings !== prevEarnings.current) {
@@ -68,7 +74,82 @@ export default function HostCallingScreen() {
         }),
       ]).start();
     }
-  }, [seconds, ratePerMin, earningsAnim]);
+  }, [seconds, ratePerMin, currentCallType, earningsAnim]);
+
+  // Simulate receiving an upgrade request after 10 seconds (for testing)
+  useEffect(() => {
+    if (currentCallType === 'audio') {
+      const testTimer = setTimeout(() => {
+        handleReceiveUpgradeRequest();
+      }, 10000);
+      return () => clearTimeout(testTimer);
+    }
+  }, [currentCallType]);
+
+  // Upgrade request timeout countdown
+  useEffect(() => {
+    if (showUpgradeRequest && upgradeTimeoutRemaining > 0) {
+      const countdownInterval = setInterval(() => {
+        setUpgradeTimeoutRemaining((prev) => {
+          if (prev <= 1) {
+            handleUpgradeTimeout();
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+
+      return () => clearInterval(countdownInterval);
+    }
+  }, [showUpgradeRequest, upgradeTimeoutRemaining]);
+
+  const handleReceiveUpgradeRequest = () => {
+    setShowUpgradeRequest(true);
+    setUpgradeTimeoutRemaining(15);
+
+    // Slide in animation
+    Animated.spring(bannerSlideAnim, {
+      toValue: 0,
+      tension: 50,
+      friction: 7,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const handleAcceptUpgrade = () => {
+    // Slide out animation
+    Animated.timing(bannerSlideAnim, {
+      toValue: -200,
+      duration: 300,
+      useNativeDriver: true,
+    }).start(() => {
+      setShowUpgradeRequest(false);
+      setCurrentCallType('video');
+      Alert.alert('Upgrade Accepted', 'Switched to video call!');
+    });
+  };
+
+  const handleRejectUpgrade = () => {
+    // Slide out animation
+    Animated.timing(bannerSlideAnim, {
+      toValue: -200,
+      duration: 300,
+      useNativeDriver: true,
+    }).start(() => {
+      setShowUpgradeRequest(false);
+    });
+  };
+
+  const handleUpgradeTimeout = () => {
+    // Fade out animation
+    Animated.timing(bannerSlideAnim, {
+      toValue: -200,
+      duration: 500,
+      useNativeDriver: true,
+    }).start(() => {
+      setShowUpgradeRequest(false);
+    });
+  };
 
   const formatTime = (totalSeconds: number) => {
     const mins = Math.floor(totalSeconds / 60);
@@ -97,6 +178,49 @@ export default function HostCallingScreen() {
         blurRadius={isVideo === '1' ? 0 : 20}
       >
         <View style={styles.overlay}>
+          {/* Upgrade Request Banner */}
+          {showUpgradeRequest && (
+            <Animated.View
+              style={[
+                styles.upgradeRequestBanner,
+                { transform: [{ translateY: bannerSlideAnim }] },
+              ]}
+            >
+              <View style={styles.upgradeRequestContent}>
+                <View style={styles.upgradeRequestHeader}>
+                  <Ionicons name="videocam" size={24} color={Colors.accent} />
+                  <View style={styles.upgradeRequestTextContainer}>
+                    <Text style={styles.upgradeRequestTitle}>Video Call Request</Text>
+                    <Text style={styles.upgradeRequestSubtitle}>
+                      {callerName} wants to switch to video
+                    </Text>
+                  </View>
+                  <View style={styles.upgradeTimeoutBadge}>
+                    <Text style={styles.upgradeTimeoutText}>{upgradeTimeoutRemaining}s</Text>
+                  </View>
+                </View>
+                <View style={styles.upgradeRequestActions}>
+                  <TouchableOpacity
+                    style={[styles.upgradeActionButton, styles.upgradeRejectButton]}
+                    onPress={handleRejectUpgrade}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="close-circle" size={20} color={Colors.white} />
+                    <Text style={styles.upgradeActionText}>Reject</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.upgradeActionButton, styles.upgradeAcceptButton]}
+                    onPress={handleAcceptUpgrade}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="checkmark-circle" size={20} color={Colors.white} />
+                    <Text style={styles.upgradeActionText}>Accept</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </Animated.View>
+          )}
+
           {/* Top Info Bar */}
           <Animated.View style={[styles.topBar, { opacity: fadeAnim }]}>
             <View style={styles.callerInfo}>
@@ -301,5 +425,89 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.5,
     shadowRadius: 8,
     elevation: 8,
+  },
+  upgradeRequestBanner: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 1000,
+  },
+  upgradeRequestContent: {
+    backgroundColor: 'rgba(0, 0, 0, 0.95)',
+    marginHorizontal: 16,
+    marginTop: 48,
+    borderRadius: 20,
+    padding: 20,
+    borderWidth: 2,
+    borderColor: Colors.accent,
+    shadowColor: Colors.accent,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.6,
+    shadowRadius: 12,
+    elevation: 12,
+  },
+  upgradeRequestHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+    gap: 12,
+  },
+  upgradeRequestTextContainer: {
+    flex: 1,
+  },
+  upgradeRequestTitle: {
+    fontSize: FontSizes.lg,
+    fontWeight: '700',
+    color: Colors.white,
+    marginBottom: 4,
+  },
+  upgradeRequestSubtitle: {
+    fontSize: FontSizes.sm,
+    color: Colors.text.secondary,
+  },
+  upgradeTimeoutBadge: {
+    backgroundColor: Colors.warning,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+  },
+  upgradeTimeoutText: {
+    fontSize: FontSizes.sm,
+    fontWeight: '700',
+    color: Colors.white,
+  },
+  upgradeRequestActions: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  upgradeActionButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    borderRadius: 16,
+    gap: 8,
+  },
+  upgradeRejectButton: {
+    backgroundColor: 'rgba(100, 100, 100, 0.5)',
+    borderWidth: 2,
+    borderColor: Colors.text.secondary,
+  },
+  upgradeAcceptButton: {
+    backgroundColor: Colors.secondary,
+    borderWidth: 2,
+    borderColor: Colors.secondary,
+    shadowColor: Colors.secondary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.5,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  upgradeActionText: {
+    fontSize: FontSizes.base,
+    fontWeight: '700',
+    color: Colors.white,
   },
 });

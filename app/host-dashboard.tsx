@@ -18,6 +18,8 @@ import { useUser } from '@/contexts/UserContext';
 import { hostService } from '@/services/appwrite';
 import { parseError } from '@/utils/errorHandler';
 import HostIncomingCall from '@/components/HostIncomingCall';
+import { notificationService } from '@/services/notificationService';
+import { useNotifications } from '@/contexts/NotificationContext';
 
 // Mock data
 const MOCK_TODAY_EARNINGS = 450;
@@ -27,11 +29,21 @@ export default function HostDashboardScreen() {
   const router = useRouter();
   const { user } = useUser();
   const { showError, showSuccess } = useToast();
+  const { incomingCall, clearIncomingCall, sendIncomingCallNotification } = useNotifications();
   const [audioOnline, setAudioOnline] = useState(false);
   const [videoOnline, setVideoOnline] = useState(false);
   const [showIncomingCall, setShowIncomingCall] = useState(false);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
+  const [notificationPermissionRequested, setNotificationPermissionRequested] = useState(false);
   const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  // Listen for incoming calls from notification context
+  useEffect(() => {
+    if (incomingCall) {
+      // Show incoming call UI
+      setShowIncomingCall(true);
+    }
+  }, [incomingCall]);
 
   useEffect(() => {
     if (audioOnline || videoOnline) {
@@ -53,7 +65,14 @@ export default function HostDashboardScreen() {
 
       // Simulate incoming call after 10 seconds when online
       const timer = setTimeout(() => {
-        setShowIncomingCall(true);
+        // Send notification (will show full-screen UI if app is in foreground)
+        sendIncomingCallNotification({
+          callerId: 'test-caller-123',
+          callerName: 'Test User',
+          callerPicture: 'https://i.pravatar.cc/300?img=12',
+          callType: videoOnline ? 'video' : 'audio',
+          callId: `call-${Date.now()}`,
+        });
       }, 10000);
 
       return () => clearTimeout(timer);
@@ -61,23 +80,27 @@ export default function HostDashboardScreen() {
       pulseAnim.stopAnimation();
       pulseAnim.setValue(1);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [audioOnline, videoOnline, pulseAnim]);
 
   const handleAcceptCall = () => {
     setShowIncomingCall(false);
+    clearIncomingCall();
     router.push({
       pathname: '/host-calling',
       params: {
-        callerName: 'John Doe',
-        callerPicture: 'https://i.pravatar.cc/300?img=12',
+        callerName: incomingCall?.callerName || 'Test User',
+        callerPicture: incomingCall?.callerPicture || 'https://i.pravatar.cc/300?img=12',
         isVideo: videoOnline ? '1' : '0',
         ratePerMin: '10',
+        callId: incomingCall?.callId || `call-${Date.now()}`,
       },
     });
   };
 
   const handleRejectCall = () => {
     setShowIncomingCall(false);
+    clearIncomingCall();
   };
 
   const handleToggleAudioOnline = async (value: boolean) => {
@@ -90,6 +113,19 @@ export default function HostDashboardScreen() {
 
     try {
       setIsUpdatingStatus(true);
+
+      // Request notification permissions on first time going online
+      if (value && !notificationPermissionRequested) {
+        const permissionGranted = await notificationService.requestPermissions();
+        setNotificationPermissionRequested(true);
+
+        if (!permissionGranted) {
+          showError('Notification permissions denied. You may miss incoming calls.');
+        } else {
+          showSuccess('Notifications enabled! You\'ll receive alerts for incoming calls.');
+        }
+      }
+
       setAudioOnline(value);
       await hostService.updateOnlineStatus(user.hostProfile.$id, value || videoOnline);
       showSuccess(value ? 'You are now online for audio calls' : 'Audio calls disabled');
@@ -114,6 +150,19 @@ export default function HostDashboardScreen() {
 
     try {
       setIsUpdatingStatus(true);
+
+      // Request notification permissions on first time going online
+      if (value && !notificationPermissionRequested) {
+        const permissionGranted = await notificationService.requestPermissions();
+        setNotificationPermissionRequested(true);
+
+        if (!permissionGranted) {
+          showError('Notification permissions denied. You may miss incoming calls.');
+        } else {
+          showSuccess('Notifications enabled! You\'ll receive alerts for incoming calls.');
+        }
+      }
+
       setVideoOnline(value);
       await hostService.updateOnlineStatus(user.hostProfile.$id, value || audioOnline);
       showSuccess(value ? 'You are now online for video calls' : 'Video calls disabled');
@@ -132,9 +181,9 @@ export default function HostDashboardScreen() {
     <SafeAreaView style={styles.container}>
       <HostIncomingCall
         visible={showIncomingCall}
-        callerName="John Doe"
-        callerPicture="https://i.pravatar.cc/300?img=12"
-        isVideo={videoOnline}
+        callerName={incomingCall?.callerName || 'Test User'}
+        callerPicture={incomingCall?.callerPicture || 'https://i.pravatar.cc/300?img=12'}
+        isVideo={incomingCall?.callType === 'video'}
         onAccept={handleAcceptCall}
         onReject={handleRejectCall}
       />

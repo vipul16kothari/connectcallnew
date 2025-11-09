@@ -21,6 +21,7 @@ import { useUser } from '@/contexts/UserContext';
 import { useToast } from '@/contexts/ToastContext';
 import { parseError } from '@/utils/errorHandler';
 import SuperHostBottomSheet from '@/components/SuperHostBottomSheet';
+import { isDummyMode, getDummyHosts } from '@/data/dummyData';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const BANNER_WIDTH = SCREEN_WIDTH - 40;
@@ -90,8 +91,26 @@ export default function HomeScreen() {
   const loadHosts = async () => {
     try {
       setIsLoadingHosts(true);
-      const onlineHosts = await hostService.getOnlineHosts();
-      setHosts(onlineHosts);
+
+      // Check if user is in dummy mode
+      if (isDummyMode(user?.authUser?.$id)) {
+        // Use dummy data
+        const dummyOnlineHosts = getDummyHosts(true);
+        setHosts(dummyOnlineHosts);
+        return;
+      }
+
+      // Try to load from Appwrite
+      try {
+        const onlineHosts = await hostService.getOnlineHosts();
+        setHosts(onlineHosts);
+      } catch (backendError) {
+        // If backend fails, fallback to dummy data
+        console.warn('Backend unavailable, using dummy data:', backendError);
+        const dummyOnlineHosts = getDummyHosts(true);
+        setHosts(dummyOnlineHosts);
+        showWarning('Using offline data. Some features may be limited.');
+      }
     } catch (error: any) {
       console.error('Error loading hosts:', error);
       const appError = parseError(error);

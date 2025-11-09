@@ -18,6 +18,7 @@ import { useUser } from '@/contexts/UserContext';
 import { useToast } from '@/contexts/ToastContext';
 import { callService, hostService, AppwriteCall, AppwriteHost } from '@/services/appwrite';
 import { parseError } from '@/utils/errorHandler';
+import { isDummyMode, getDummyCallHistory, getDummyHostById } from '@/data/dummyData';
 
 interface CallWithHost extends AppwriteCall {
   host?: AppwriteHost;
@@ -39,22 +40,47 @@ export default function RecentsScreen() {
 
     try {
       setIsLoading(true);
-      const callHistory = await callService.getCallHistory(user.authUser.$id);
 
-      // Fetch host details for each call
-      const callsWithHosts = await Promise.all(
-        callHistory.map(async (call) => {
-          try {
-            const host = await hostService.getHostById(call.hostId);
-            return { ...call, host: host || undefined };
-          } catch (error) {
-            console.error('Error fetching host:', error);
-            return call;
-          }
-        })
-      );
+      // Check if user is in dummy mode
+      if (isDummyMode(user.authUser.$id)) {
+        // Use dummy data
+        const dummyCallHistory = getDummyCallHistory();
+        const callsWithHosts = dummyCallHistory.map((call) => {
+          const host = getDummyHostById(call.hostId);
+          return { ...call, host: host || undefined };
+        });
+        setCalls(callsWithHosts);
+        return;
+      }
 
-      setCalls(callsWithHosts);
+      // Try to load from Appwrite
+      try {
+        const callHistory = await callService.getCallHistory(user.authUser.$id);
+
+        // Fetch host details for each call
+        const callsWithHosts = await Promise.all(
+          callHistory.map(async (call) => {
+            try {
+              const host = await hostService.getHostById(call.hostId);
+              return { ...call, host: host || undefined };
+            } catch (error) {
+              console.error('Error fetching host:', error);
+              return call;
+            }
+          })
+        );
+
+        setCalls(callsWithHosts);
+      } catch (backendError) {
+        // If backend fails, fallback to dummy data
+        console.warn('Backend unavailable, using dummy call history:', backendError);
+        const dummyCallHistory = getDummyCallHistory();
+        const callsWithHosts = dummyCallHistory.map((call) => {
+          const host = getDummyHostById(call.hostId);
+          return { ...call, host: host || undefined };
+        });
+        setCalls(callsWithHosts);
+      }
     } catch (error: any) {
       console.error('Error loading call history:', error);
       const appError = parseError(error);

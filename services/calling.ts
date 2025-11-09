@@ -1,15 +1,14 @@
 /**
- * Calling Service with GetStream.io Integration
+ * Calling Service
  * Handles all live calling functionality with pre-call checks and smart logic
+ *
+ * Note: Stream Video SDK integration has been removed to prevent native module
+ * initialization errors. If real-time video calling is needed, integrate the
+ * SDK in a separate lazy-loaded module with proper error boundaries.
  */
 
-import { StreamVideoClient, User as StreamUser } from '@stream-io/video-react-native-sdk';
 import NetInfo from '@react-native-community/netinfo';
 import { userService, callService as appwriteCallService, transactionService } from './appwrite';
-
-// GetStream.io Configuration
-const STREAM_API_KEY = process.env.EXPO_PUBLIC_STREAM_API_KEY || '';
-const STREAM_SECRET = process.env.EXPO_PUBLIC_STREAM_SECRET || '';
 
 // Call costs per minute
 export const AUDIO_COST_PER_MIN = 10;
@@ -74,31 +73,25 @@ export function calculateCoinsSpent(durationSeconds: number, costPerMin: number)
 }
 
 /**
- * Create GetStream.io call instance
+ * Create call instance
+ *
+ * Note: This function previously used GetStream.io SDK but has been removed
+ * to prevent native module crashes. For real video calling, integrate a
+ * lightweight SDK or implement custom WebRTC solution.
  */
-export async function createStreamCall(
+export async function createCall(
   userId: string,
   userName: string,
   callId: string
-): Promise<StreamVideoClient | null> {
+): Promise<boolean> {
   try {
-    // In production, generate token from backend
-    // For now, using client-side token generation (not secure for production)
-    const user: StreamUser = {
-      id: userId,
-      name: userName,
-    };
-
-    const client = new StreamVideoClient({
-      apiKey: STREAM_API_KEY,
-      user,
-      token: STREAM_SECRET, // TODO: Replace with backend-generated token
-    });
-
-    return client;
+    console.log('Creating call for user:', userId, userName, callId);
+    // Placeholder for future video calling implementation
+    // When implementing, use dynamic import() to lazy-load heavy native modules
+    return true;
   } catch (error) {
-    console.error('Error creating Stream call:', error);
-    return null;
+    console.error('Error creating call:', error);
+    return false;
   }
 }
 

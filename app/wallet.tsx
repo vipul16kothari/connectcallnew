@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   ScrollView,
   SafeAreaView,
   Animated,
+  ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Colors } from '@/constants/Colors';
@@ -16,6 +17,11 @@ import { ENHANCED_COIN_PACKAGES, EnhancedCoinPackage } from '@/data/coinPackages
 import { Ionicons } from '@expo/vector-icons';
 import { useToast } from '@/contexts/ToastContext';
 import { useUser } from '@/contexts/UserContext';
+import {
+  configService,
+  transactionService,
+  type ConfiguredCoinPackage,
+} from '@/services/appwrite';
 
 interface CoinPackageCardProps {
   package: EnhancedCoinPackage;
@@ -91,12 +97,80 @@ function CoinPackageCard({ package: pkg, onPress }: CoinPackageCardProps) {
   );
 }
 
+function mapConfiguredCoinPackage(pkg: ConfiguredCoinPackage): EnhancedCoinPackage {
+  return {
+    id: pkg.id,
+    coins: pkg.coins,
+    price: pkg.priceDisplay || `₹${pkg.priceValue}`,
+    originalPrice: undefined,
+    discount: pkg.discount,
+    tag: pkg.tag,
+    tagEmoji: pkg.tagEmoji,
+    popular: pkg.popular,
+    isLimitedOffer: pkg.isLimitedOffer,
+  };
+}
+
 export default function WalletScreen() {
   const router = useRouter();
   const { showInfo } = useToast();
   const { user } = useUser();
+  const [coinPackages, setCoinPackages] = useState<EnhancedCoinPackage[]>(ENHANCED_COIN_PACKAGES);
+  const [isLoadingPackages, setIsLoadingPackages] = useState(true);
+  const [hasRecharged, setHasRecharged] = useState(false);
 
   const currentBalance = user?.userProfile?.walletBalance || INITIAL_WALLET_BALANCE;
+
+  useEffect(() => {
+    let mounted = true;
+
+    const loadPackages = async () => {
+      if (!user?.authUser) {
+        setHasRecharged(false);
+        setCoinPackages(ENHANCED_COIN_PACKAGES);
+        setIsLoadingPackages(false);
+        return;
+      }
+
+      setIsLoadingPackages(true);
+
+      try {
+        const hasPurchase = await transactionService.hasCompletedPurchase(user.authUser.$id);
+        if (!mounted) {
+          return;
+        }
+
+        setHasRecharged(hasPurchase);
+        const stage = hasPurchase ? 'repeat' : 'first';
+        const remotePackages = await configService.getCoinPackages(stage);
+
+        if (!mounted) {
+          return;
+        }
+
+        if (remotePackages.length > 0) {
+          setCoinPackages(remotePackages.map(mapConfiguredCoinPackage));
+        } else {
+          setCoinPackages(ENHANCED_COIN_PACKAGES);
+        }
+      } catch (error) {
+        console.error('Failed to load wallet packages', error);
+        if (mounted) {
+          setCoinPackages(ENHANCED_COIN_PACKAGES);
+        }
+      } finally {
+        if (mounted) {
+          setIsLoadingPackages(false);
+        }
+      }
+    };
+
+    loadPackages();
+
+    return () => {
+      mounted = false;
+    };
+  }, [user?.authUser]);
 
   const handlePurchase = (coinPackage: EnhancedCoinPackage) => {
     try {
@@ -144,7 +218,11 @@ export default function WalletScreen() {
           <View style={styles.sectionHeader}>
             <View>
               <Text style={styles.sectionTitle}>Choose Your Package</Text>
-              <Text style={styles.sectionSubtitle}>All packages include instant delivery</Text>
+              <Text style={styles.sectionSubtitle}>
+                {hasRecharged
+                  ? 'Recharge again and keep talking'
+                  : 'Unlock exclusive first recharge offers'}
+              </Text>
             </View>
             <View style={styles.flashSaleBadge}>
               <Ionicons name="flash" size={16} color={Colors.warning} />
@@ -154,9 +232,20 @@ export default function WalletScreen() {
 
           {/* 3x4 Grid */}
           <View style={styles.packagesGrid}>
-            {ENHANCED_COIN_PACKAGES.map((pkg) => (
-              <CoinPackageCard key={pkg.id} package={pkg} onPress={() => handlePurchase(pkg)} />
-            ))}
+            {isLoadingPackages ? (
+              <View style={styles.loadingPackagesContainer}>
+                <ActivityIndicator size="large" color={Colors.primary} />
+                <Text style={styles.loadingPackagesText}>Loading packages...</Text>
+              </View>
+            ) : coinPackages.length === 0 ? (
+              <Text style={styles.emptyPackagesText}>
+                Packages are unavailable right now. Please check back soon.
+              </Text>
+            ) : (
+              coinPackages.map((pkg) => (
+                <CoinPackageCard key={pkg.id} package={pkg} onPress={() => handlePurchase(pkg)} />
+              ))
+            )}
           </View>
         </View>
 
@@ -301,6 +390,23 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 12,
+  },
+  loadingPackagesContainer: {
+    width: '100%',
+    paddingVertical: 40,
+    alignItems: 'center',
+    gap: 12,
+  },
+  loadingPackagesText: {
+    fontSize: FontSizes.sm,
+    color: Colors.text.secondary,
+  },
+  emptyPackagesText: {
+    width: '100%',
+    textAlign: 'center',
+    fontSize: FontSizes.sm,
+    color: Colors.text.secondary,
+    paddingVertical: 24,
   },
   packageCardTouchable: {
     width: '31.5%', // 3 columns with gaps

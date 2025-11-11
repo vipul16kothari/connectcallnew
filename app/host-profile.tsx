@@ -49,14 +49,18 @@ export default function HostProfileScreen() {
   }
 
   const handleCall = (isVideo: boolean) => {
+    const callId = `call-${Date.now()}`;
     router.push({
       pathname: '/calling',
       params: {
+        callId,
         hostId: host.id,
         hostName: host.name,
         hostPicture: host.profilePicture,
         isVideo: isVideo ? '1' : '0',
-        costPerMin: isVideo ? host.videoCostPerMin : host.audioCostPerMin,
+        costPerMin: (isVideo ? host.videoCostPerMin : host.audioCostPerMin)?.toString(),
+        audioRate: host.audioCostPerMin?.toString(),
+        videoRate: host.videoCostPerMin?.toString(),
       },
     });
   };

@@ -47,6 +47,21 @@ export const APPWRITE_CONFIG = {
     transactions:
       process.env.EXPO_PUBLIC_APPWRITE_TRANSACTIONS_COLLECTION_ID ||
       'YOUR_TRANSACTIONS_COLLECTION_ID',
+
+    // Call pricing configuration collection
+    callPricing:
+      process.env.EXPO_PUBLIC_APPWRITE_CALL_PRICING_COLLECTION_ID ||
+      'YOUR_CALL_PRICING_COLLECTION_ID',
+
+    // Wallet package configuration collection
+    coinPackages:
+      process.env.EXPO_PUBLIC_APPWRITE_COIN_PACKAGES_COLLECTION_ID ||
+      'YOUR_COIN_PACKAGES_COLLECTION_ID',
+
+    // Quick top-up packages for in-call recharge
+    quickTopups:
+      process.env.EXPO_PUBLIC_APPWRITE_QUICK_TOPUPS_COLLECTION_ID ||
+      'YOUR_QUICK_TOPUPS_COLLECTION_ID',
   },
 
   // Storage Bucket ID (for profile pictures, etc.)

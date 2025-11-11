@@ -1,25 +1,12 @@
-/**
- * Calling Service
- * Handles all live calling functionality with pre-call checks and smart logic
- *
- * Note: Stream Video SDK integration has been removed to prevent native module
- * initialization errors. If real-time video calling is needed, integrate the
- * SDK in a separate lazy-loaded module with proper error boundaries.
- */
-
 import NetInfo from '@react-native-community/netinfo';
-import { userService, callService as appwriteCallService, transactionService } from './appwrite';
-
-// Call costs per minute
-export const AUDIO_COST_PER_MIN = 10;
-export const VIDEO_COST_PER_MIN = 60;
-
-export interface CallConfig {
-  userId: string;
-  hostId: string;
-  isVideo: boolean;
-  costPerMin: number;
-}
+import {
+  userService,
+  hostService,
+  callService as appwriteCallService,
+  transactionService,
+  configService,
+  type ConfiguredCallPricing,
+} from './appwrite';
 
 export interface CallDuration {
   maxDurationSeconds: number;
@@ -31,13 +18,50 @@ export interface ConnectionStatus {
   reconnectTimeRemaining: number;
 }
 
-/**
- * Calculate maximum call duration based on wallet balance
- */
-export function calculateMaxDuration(balance: number, costPerMin: number): CallDuration {
-  const maxMinutes = balance / costPerMin;
+export interface CallValidationResult {
+  valid: boolean;
+  error?: string;
+  maxDuration?: number;
+  pricing?: ConfiguredCallPricing;
+  walletBalance?: number;
+}
+
+export interface BillingSnapshot {
+  coinsSpentExact: number;
+  coinsSpentRounded: number;
+  totalDurationSeconds: number;
+  audioSeconds: number;
+  videoSeconds: number;
+  segments: Array<{
+    type: 'audio' | 'video';
+    durationSeconds: number;
+    coinsExact: number;
+    coinsRounded: number;
+  }>;
+}
+
+const DEFAULT_CALL_PRICING: ConfiguredCallPricing = {
+  audioCostPerMin: 10,
+  videoCostPerMin: 60,
+  minimumDuration: 60,
+  warningThreshold: 60,
+  reconnectionTimeout: 45,
+};
+
+export const AUDIO_COST_PER_MIN = DEFAULT_CALL_PRICING.audioCostPerMin;
+export const VIDEO_COST_PER_MIN = DEFAULT_CALL_PRICING.videoCostPerMin;
+
+function roundSeconds(seconds: number): number {
+  return Math.max(0, Math.round(seconds));
+}
+
+export function calculateMaxDuration(
+  balance: number,
+  costPerMin: number,
+  warningThresholdSeconds: number
+): CallDuration {
+  const maxMinutes = costPerMin > 0 ? balance / costPerMin : 0;
   const maxDurationSeconds = Math.floor(maxMinutes * 60);
-  const warningThresholdSeconds = 60; // Warn when less than 1 minute remains
 
   return {
     maxDurationSeconds,
@@ -45,13 +69,21 @@ export function calculateMaxDuration(balance: number, costPerMin: number): CallD
   };
 }
 
-/**
- * Check if user has sufficient balance for call
- */
-export function canStartCall(balance: number, costPerMin: number, minDurationSeconds: number = 60): {
+export function canStartCall(
+  balance: number,
+  costPerMin: number,
+  minDurationSeconds: number
+): {
   canCall: boolean;
   reason?: string;
 } {
+  if (costPerMin <= 0) {
+    return {
+      canCall: false,
+      reason: 'Invalid call pricing. Please contact support.',
+    };
+  }
+
   const requiredBalance = (minDurationSeconds / 60) * costPerMin;
 
   if (balance < requiredBalance) {
@@ -64,59 +96,35 @@ export function canStartCall(balance: number, costPerMin: number, minDurationSec
   return { canCall: true };
 }
 
-/**
- * Calculate coins spent based on call duration
- */
-export function calculateCoinsSpent(durationSeconds: number, costPerMin: number): number {
-  const minutes = Math.ceil(durationSeconds / 60); // Round up to nearest minute
-  return minutes * costPerMin;
-}
-
-/**
- * Create call instance
- *
- * Note: This function previously used GetStream.io SDK but has been removed
- * to prevent native module crashes. For real video calling, integrate a
- * lightweight SDK or implement custom WebRTC solution.
- */
-export async function createCall(
-  userId: string,
-  userName: string,
-  callId: string
-): Promise<boolean> {
-  try {
-    console.log('Creating call for user:', userId, userName, callId);
-    // Placeholder for future video calling implementation
-    // When implementing, use dynamic import() to lazy-load heavy native modules
-    return true;
-  } catch (error) {
-    console.error('Error creating call:', error);
-    return false;
-  }
-}
-
-/**
- * Monitor network connection during call
- */
 export class ConnectionMonitor {
-  private isMonitoring: boolean = false;
-  private reconnectTimeout: NodeJS.Timeout | null = null;
+  private isMonitoring = false;
+  private reconnectInterval: NodeJS.Timeout | null = null;
   private onStatusChange?: (status: ConnectionStatus) => void;
-  private disconnectTime: number = 0;
-  private readonly MAX_RECONNECT_TIME = 45000; // 45 seconds
+  private disconnectTime = 0;
+  private maxReconnectMs: number;
+  private netInfoUnsubscribe: (() => void) | null = null;
+
+  constructor(maxReconnectSeconds: number = DEFAULT_CALL_PRICING.reconnectionTimeout) {
+    this.maxReconnectMs = maxReconnectSeconds * 1000;
+  }
+
+  updateTimeout(seconds: number) {
+    this.maxReconnectMs = Math.max(5000, seconds * 1000);
+  }
 
   start(onStatusChange: (status: ConnectionStatus) => void) {
+    this.stop();
     this.isMonitoring = true;
     this.onStatusChange = onStatusChange;
 
-    NetInfo.addEventListener((state) => {
-      if (!this.isMonitoring) return;
+    this.netInfoUnsubscribe = NetInfo.addEventListener((state) => {
+      if (!this.isMonitoring) {
+        return;
+      }
 
       if (state.isConnected) {
-        // Connection restored
         this.handleReconnection();
       } else {
-        // Connection lost
         this.handleDisconnection();
       }
     });
@@ -124,92 +132,143 @@ export class ConnectionMonitor {
 
   stop() {
     this.isMonitoring = false;
-    if (this.reconnectTimeout) {
-      clearTimeout(this.reconnectTimeout);
-      this.reconnectTimeout = null;
+    if (this.reconnectInterval) {
+      clearInterval(this.reconnectInterval);
+      this.reconnectInterval = null;
+    }
+
+    if (this.netInfoUnsubscribe) {
+      this.netInfoUnsubscribe();
+      this.netInfoUnsubscribe = null;
     }
   }
 
   private handleDisconnection() {
     this.disconnectTime = Date.now();
 
-    // Start countdown for reconnection
-    this.reconnectTimeout = setInterval(() => {
-      const elapsed = Date.now() - this.disconnectTime;
-      const remaining = Math.max(0, this.MAX_RECONNECT_TIME - elapsed);
+    if (this.reconnectInterval) {
+      clearInterval(this.reconnectInterval);
+    }
 
-      if (this.onStatusChange) {
-        this.onStatusChange({
-          isConnected: false,
-          reconnectTimeRemaining: Math.ceil(remaining / 1000),
-        });
-      }
+    this.reconnectInterval = setInterval(() => {
+      const elapsed = Date.now() - this.disconnectTime;
+      const remaining = Math.max(0, this.maxReconnectMs - elapsed);
+
+      this.onStatusChange?.({
+        isConnected: false,
+        reconnectTimeRemaining: Math.ceil(remaining / 1000),
+      });
 
       if (remaining <= 0) {
-        // Time's up - terminate call
         this.stop();
       }
-    }, 1000) as any;
+    }, 1000) as unknown as NodeJS.Timeout;
   }
 
   private handleReconnection() {
-    if (this.reconnectTimeout) {
-      clearInterval(this.reconnectTimeout);
-      this.reconnectTimeout = null;
+    if (this.reconnectInterval) {
+      clearInterval(this.reconnectInterval);
+      this.reconnectInterval = null;
     }
 
-    if (this.onStatusChange) {
-      this.onStatusChange({
-        isConnected: true,
-        reconnectTimeRemaining: 0,
-      });
-    }
+    this.onStatusChange?.({
+      isConnected: true,
+      reconnectTimeRemaining: 0,
+    });
   }
 }
 
-/**
- * Complete call flow manager
- */
-export class CallManager {
-  private connectionMonitor: ConnectionMonitor;
-  private callStartTime: number = 0;
-  private callDocumentId: string | null = null;
-  private timerInterval: NodeJS.Timeout | null = null;
+type BillingSegmentInternal = {
+  type: 'audio' | 'video';
+  start: number;
+  end?: number;
+};
 
-  constructor() {
-    this.connectionMonitor = new ConnectionMonitor();
+export class CallManager {
+  private callStartTime = 0;
+  private callDocumentId: string | null = null;
+  private availableCoins = 0;
+  private pricing: ConfiguredCallPricing = { ...DEFAULT_CALL_PRICING };
+  private callSegments: BillingSegmentInternal[] = [];
+  private currentCallType: 'audio' | 'video' = 'audio';
+  private userDocumentId: string | null = null;
+  private coinsDebitedRounded = 0;
+  private billingSyncInProgress = false;
+
+  reset() {
+    this.callStartTime = 0;
+    this.callDocumentId = null;
+    this.availableCoins = 0;
+    this.pricing = { ...DEFAULT_CALL_PRICING };
+    this.callSegments = [];
+    this.currentCallType = 'audio';
+    this.userDocumentId = null;
+    this.coinsDebitedRounded = 0;
+    this.billingSyncInProgress = false;
   }
 
-  /**
-   * Pre-call validation
-   */
+  getPricing(): ConfiguredCallPricing {
+    return this.pricing;
+  }
+
+  getAvailableCoins(): number {
+    return this.availableCoins;
+  }
+
+  addCoins(amount: number) {
+    this.availableCoins += amount;
+  }
+
   async validateCall(
     userId: string,
     hostId: string,
     isVideo: boolean
-  ): Promise<{ valid: boolean; error?: string; maxDuration?: number }> {
+  ): Promise<CallValidationResult> {
+    this.reset();
+
     try {
-      // Get user's wallet balance
-      const userProfile = await userService.getUserProfile(userId);
+      const [userProfile, hostProfile, configuredPricing] = await Promise.all([
+        userService.getUserProfile(userId),
+        hostService.getHostById(hostId),
+        configService.getCallPricingConfig(),
+      ]);
+
       if (!userProfile) {
         return { valid: false, error: 'User profile not found' };
       }
 
-      const costPerMin = isVideo ? VIDEO_COST_PER_MIN : AUDIO_COST_PER_MIN;
-      const balance = userProfile.walletBalance || 0;
+      const basePricing = configuredPricing ?? DEFAULT_CALL_PRICING;
+      const resolvedPricing: ConfiguredCallPricing = {
+        audioCostPerMin: hostProfile?.audioCostPerMin ?? basePricing.audioCostPerMin,
+        videoCostPerMin: hostProfile?.videoCostPerMin ?? basePricing.videoCostPerMin,
+        minimumDuration: basePricing.minimumDuration,
+        warningThreshold: basePricing.warningThreshold,
+        reconnectionTimeout: basePricing.reconnectionTimeout,
+      };
 
-      // Check if user can start call
-      const canCall = canStartCall(balance, costPerMin);
+      this.pricing = resolvedPricing;
+      this.availableCoins = userProfile.walletBalance || 0;
+      this.currentCallType = isVideo ? 'video' : 'audio';
+      this.userDocumentId = userProfile.$id;
+
+      const costPerMin = isVideo ? resolvedPricing.videoCostPerMin : resolvedPricing.audioCostPerMin;
+      const canCall = canStartCall(this.availableCoins, costPerMin, resolvedPricing.minimumDuration);
+
       if (!canCall.canCall) {
         return { valid: false, error: canCall.reason };
       }
 
-      // Calculate max duration
-      const duration = calculateMaxDuration(balance, costPerMin);
+      const duration = calculateMaxDuration(
+        this.availableCoins,
+        costPerMin,
+        resolvedPricing.warningThreshold
+      );
 
       return {
         valid: true,
         maxDuration: duration.maxDurationSeconds,
+        pricing: resolvedPricing,
+        walletBalance: this.availableCoins,
       };
     } catch (error) {
       console.error('Call validation error:', error);
@@ -217,9 +276,6 @@ export class CallManager {
     }
   }
 
-  /**
-   * Start call
-   */
   async startCall(
     userId: string,
     hostId: string,
@@ -227,24 +283,25 @@ export class CallManager {
     isVideo: boolean
   ): Promise<{ success: boolean; error?: string }> {
     try {
-      // Create call record in Appwrite
       const callDoc = await appwriteCallService.createCall({
         callId,
         userId,
         hostId,
         callType: isVideo ? 'video' : 'audio',
+        audioCostPerMin: this.pricing.audioCostPerMin,
+        videoCostPerMin: this.pricing.videoCostPerMin,
       });
 
       this.callDocumentId = callDoc.$id;
       this.callStartTime = Date.now();
-
-      // Start connection monitoring
-      this.connectionMonitor.start((status) => {
-        if (!status.isConnected && status.reconnectTimeRemaining === 0) {
-          // Connection timeout - end call
-          this.endCall(userId, isVideo);
-        }
-      });
+      this.callSegments = [
+        {
+          type: isVideo ? 'video' : 'audio',
+          start: this.callStartTime,
+        },
+      ];
+      this.currentCallType = isVideo ? 'video' : 'audio';
+      this.coinsDebitedRounded = 0;
 
       return { success: true };
     } catch (error) {
@@ -253,47 +310,225 @@ export class CallManager {
     }
   }
 
-  /**
-   * End call and process charges
-   */
-  async endCall(
-    userId: string,
-    isVideo: boolean
-  ): Promise<{ success: boolean; coinsSpent: number }> {
+  async switchCallType(isVideo: boolean): Promise<void> {
+    const nextType: 'audio' | 'video' = isVideo ? 'video' : 'audio';
+    if (nextType === this.currentCallType) {
+      return;
+    }
+
+    const now = Date.now();
+    this.finalizeCurrentSegment(now);
+
+    await this.syncIncrementalBilling(now);
+
+    this.callSegments.push({
+      type: nextType,
+      start: now,
+    });
+
+    this.currentCallType = nextType;
+
+    if (this.callDocumentId) {
+      try {
+        await appwriteCallService.updateCallType(this.callDocumentId, nextType);
+      } catch (error) {
+        console.warn('Failed to update call type in backend', error);
+      }
+    }
+  }
+
+  private finalizeCurrentSegment(referenceTime: number = Date.now()) {
+    if (!this.callSegments.length) {
+      return;
+    }
+
+    const lastSegment = this.callSegments[this.callSegments.length - 1];
+    if (!lastSegment.end) {
+      lastSegment.end = referenceTime;
+    }
+  }
+
+  getBillingSnapshot(referenceTime: number = Date.now()): BillingSnapshot {
+    if (!this.callSegments.length) {
+      return {
+        coinsSpentExact: 0,
+        coinsSpentRounded: 0,
+        totalDurationSeconds: 0,
+        audioSeconds: 0,
+        videoSeconds: 0,
+        segments: [],
+      };
+    }
+
+    let audioSeconds = 0;
+    let videoSeconds = 0;
+    const segments: BillingSnapshot['segments'] = [];
+
+    this.callSegments.forEach((segment) => {
+      const start = segment.start;
+      const end = segment.end ?? referenceTime;
+      const durationSeconds = Math.max(0, (end - start) / 1000);
+      const rate = segment.type === 'video' ? this.pricing.videoCostPerMin : this.pricing.audioCostPerMin;
+      const coinsExact = (durationSeconds / 60) * rate;
+      const coinsRounded = Math.ceil(coinsExact);
+
+      if (segment.type === 'video') {
+        videoSeconds += durationSeconds;
+      } else {
+        audioSeconds += durationSeconds;
+      }
+
+      segments.push({
+        type: segment.type,
+        durationSeconds: roundSeconds(durationSeconds),
+        coinsExact,
+        coinsRounded,
+      });
+    });
+
+    const totalAudioCost = (audioSeconds / 60) * this.pricing.audioCostPerMin;
+    const totalVideoCost = (videoSeconds / 60) * this.pricing.videoCostPerMin;
+    const coinsExactTotal = totalAudioCost + totalVideoCost;
+
+    return {
+      coinsSpentExact: coinsExactTotal,
+      coinsSpentRounded: Math.ceil(coinsExactTotal),
+      totalDurationSeconds: roundSeconds(audioSeconds + videoSeconds),
+      audioSeconds: roundSeconds(audioSeconds),
+      videoSeconds: roundSeconds(videoSeconds),
+      segments,
+    };
+  }
+
+  getCoinsRemaining(referenceTime: number = Date.now()): number {
+    const snapshot = this.getBillingSnapshot(referenceTime);
+    return Math.max(0, this.availableCoins - snapshot.coinsSpentExact);
+  }
+
+  private calculateCoinsDueForStartedMinutes(referenceTime: number = Date.now()): {
+    coinsDue: number;
+    snapshot: BillingSnapshot;
+  } {
+    const snapshot = this.getBillingSnapshot(referenceTime);
+
+    let coinsDue = 0;
+
+    this.callSegments.forEach((segment) => {
+      const end = segment.end ?? referenceTime;
+      const durationSeconds = Math.max(0, (end - segment.start) / 1000);
+
+      if (segment.end && durationSeconds === 0) {
+        return;
+      }
+
+      const rate = segment.type === 'video' ? this.pricing.videoCostPerMin : this.pricing.audioCostPerMin;
+      const minutesStarted = Math.max(1, Math.ceil(durationSeconds / 60));
+
+      coinsDue += minutesStarted * rate;
+    });
+
+    return { coinsDue, snapshot };
+  }
+
+  async syncIncrementalBilling(referenceTime: number = Date.now()): Promise<{
+    success: boolean;
+    coinsDeducted: number;
+  }> {
+    if (!this.callDocumentId || !this.userDocumentId) {
+      return { success: false, coinsDeducted: 0 };
+    }
+
+    if (this.billingSyncInProgress) {
+      return { success: true, coinsDeducted: 0 };
+    }
+
+    const { coinsDue, snapshot } = this.calculateCoinsDueForStartedMinutes(referenceTime);
+    const coinsToBill = coinsDue - this.coinsDebitedRounded;
+
+    if (coinsToBill <= 0) {
+      return { success: true, coinsDeducted: 0 };
+    }
+
+    this.billingSyncInProgress = true;
+
     try {
-      // Stop monitoring
-      this.connectionMonitor.stop();
-      if (this.timerInterval) {
-        clearInterval(this.timerInterval);
+      const walletCoinsRemaining = this.availableCoins - this.coinsDebitedRounded;
+      if (walletCoinsRemaining < coinsToBill) {
+        throw new Error('Insufficient wallet balance for incremental billing');
       }
 
-      // Calculate duration and coins
-      const durationSeconds = Math.floor((Date.now() - this.callStartTime) / 1000);
-      const costPerMin = isVideo ? VIDEO_COST_PER_MIN : AUDIO_COST_PER_MIN;
-      const coinsSpent = calculateCoinsSpent(durationSeconds, costPerMin);
+      try {
+        await appwriteCallService.updateCallProgress(this.callDocumentId, {
+          duration: snapshot.totalDurationSeconds,
+          coinsSpent: coinsDue,
+        });
+      } catch (error) {
+        console.warn('Failed to sync call progress', error);
+      }
 
-      // Update call record
+      await userService.updateWalletBalance(this.userDocumentId, -coinsToBill);
+
+      this.coinsDebitedRounded += coinsToBill;
+
+      return { success: true, coinsDeducted: coinsToBill };
+    } catch (error) {
+      console.error('Incremental billing failed', error);
+      return { success: false, coinsDeducted: 0 };
+    } finally {
+      this.billingSyncInProgress = false;
+    }
+  }
+
+  async endCall(userId: string): Promise<{ success: boolean; coinsSpent: number }> {
+    try {
+      this.finalizeCurrentSegment();
+
+      await this.syncIncrementalBilling();
+
+      const snapshot = this.getBillingSnapshot();
+      const coinsSpent = snapshot.coinsSpentRounded;
+      const outstandingCoins = coinsSpent - this.coinsDebitedRounded;
+
       if (this.callDocumentId) {
-        await appwriteCallService.endCall(this.callDocumentId, durationSeconds, coinsSpent);
+        await appwriteCallService.endCall(
+          this.callDocumentId,
+          snapshot.totalDurationSeconds,
+          coinsSpent,
+          snapshot.segments
+        );
       }
 
-      // Deduct coins from wallet
       const userProfile = await userService.getUserProfile(userId);
       if (userProfile) {
-        await userService.updateWalletBalance(userProfile.$id, -coinsSpent);
+        if (outstandingCoins !== 0) {
+          await userService.updateWalletBalance(userProfile.$id, -outstandingCoins);
+          this.coinsDebitedRounded += outstandingCoins;
+        }
 
-        // Create transaction record
+        const videoMinutes = snapshot.videoSeconds / 60;
+        const audioMinutes = snapshot.audioSeconds / 60;
+        const parts: string[] = [];
+        if (videoMinutes >= 1) {
+          parts.push(`${Math.max(1, Math.round(videoMinutes))} min video`);
+        }
+        if (audioMinutes >= 1) {
+          parts.push(`${Math.max(1, Math.round(audioMinutes))} min audio`);
+        }
+
         await transactionService.createTransaction({
           userId,
           type: 'call',
           amount: -coinsSpent,
-          description: `${isVideo ? 'Video' : 'Audio'} call - ${Math.floor(durationSeconds / 60)} minutes`,
+          description: parts.length ? `Call - ${parts.join(' + ')}` : 'Call usage',
         });
       }
 
-      return { success: true, coinsSpent };
+      const result = { success: true, coinsSpent };
+      this.reset();
+      return result;
     } catch (error) {
       console.error('End call error:', error);
+      this.reset();
       return { success: false, coinsSpent: 0 };
     }
   }

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -14,6 +14,7 @@ import { Colors } from '@/constants/Colors';
 import { FontSizes } from '@/constants/Fonts';
 import { useUser } from '@/contexts/UserContext';
 import { useToast } from '@/contexts/ToastContext';
+import { configService, transactionService } from '@/services/appwrite';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -26,14 +27,15 @@ interface InCallRechargeSheetProps {
 interface QuickPackage {
   id: string;
   coins: number;
-  price: number;
+  priceDisplay: string;
+  priceValue: number;
   popular?: boolean;
 }
 
-const QUICK_PACKAGES: QuickPackage[] = [
-  { id: 'quick_50', coins: 50, price: 49 },
-  { id: 'quick_100', coins: 100, price: 99, popular: true },
-  { id: 'quick_200', coins: 200, price: 199 },
+const FALLBACK_QUICK_PACKAGES: QuickPackage[] = [
+  { id: 'quick_50', coins: 50, priceDisplay: '₹49', priceValue: 49 },
+  { id: 'quick_100', coins: 100, priceDisplay: '₹99', priceValue: 99, popular: true },
+  { id: 'quick_200', coins: 200, priceDisplay: '₹199', priceValue: 199 },
 ];
 
 export default function InCallRechargeSheet({
@@ -45,9 +47,52 @@ export default function InCallRechargeSheet({
   const { showError, showSuccess } = useToast();
   const [isLoading, setIsLoading] = useState(false);
   const [selectedPackage, setSelectedPackage] = useState<string | null>(null);
+  const [packages, setPackages] = useState<QuickPackage[]>(FALLBACK_QUICK_PACKAGES);
+  const [isLoadingPackages, setIsLoadingPackages] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const loadPackages = async () => {
+      try {
+        const remotePackages = await configService.getQuickTopupPackages();
+        if (!mounted) {
+          return;
+        }
+
+        if (remotePackages.length > 0) {
+          const mapped = remotePackages.map((pkg) => ({
+            id: pkg.id,
+            coins: pkg.coins,
+            priceDisplay: pkg.priceDisplay,
+            priceValue: pkg.priceValue,
+            popular: pkg.popular,
+          }));
+          setPackages(mapped);
+        } else {
+          setPackages(FALLBACK_QUICK_PACKAGES);
+        }
+      } catch (error) {
+        console.error('Failed to load quick recharge packages', error);
+        if (mounted) {
+          setPackages(FALLBACK_QUICK_PACKAGES);
+        }
+      } finally {
+        if (mounted) {
+          setIsLoadingPackages(false);
+        }
+      }
+    };
+
+    loadPackages();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const handlePurchase = async (pkg: QuickPackage) => {
-    if (isLoading) return;
+    if (isLoading || isLoadingPackages) return;
 
     try {
       setIsLoading(true);
@@ -58,6 +103,22 @@ export default function InCallRechargeSheet({
 
       // Update wallet balance
       await updateWallet(pkg.coins);
+
+      if (user?.authUser) {
+        try {
+          await transactionService.createTransaction({
+            userId: user.authUser.$id,
+            type: 'purchase',
+            amount: pkg.coins,
+            description: pkg.priceDisplay
+              ? `Quick recharge - ${pkg.coins} coins (${pkg.priceDisplay})`
+              : `Quick recharge - ${pkg.coins} coins`,
+          });
+        } catch (transactionError) {
+          console.warn('Failed to record quick recharge transaction', transactionError);
+        }
+      }
+
       showSuccess(`${pkg.coins} coins added to your wallet!`);
       onSuccess(pkg.coins);
       onClose();
@@ -120,47 +181,54 @@ export default function InCallRechargeSheet({
             showsVerticalScrollIndicator={false}
           >
             <Text style={styles.sectionTitle}>Quick Top-Up</Text>
-            {QUICK_PACKAGES.map((pkg) => (
-              <TouchableOpacity
-                key={pkg.id}
-                style={[
-                  styles.packageCard,
-                  pkg.popular && styles.packageCardPopular,
-                  selectedPackage === pkg.id && styles.packageCardSelected,
-                ]}
-                onPress={() => handlePurchase(pkg)}
-                disabled={isLoading}
-                activeOpacity={0.7}
-              >
-                {pkg.popular && (
-                  <View style={styles.popularBadge}>
-                    <Text style={styles.popularText}>Most Popular</Text>
+            {isLoadingPackages ? (
+              <View style={styles.loadingPackages}>
+                <ActivityIndicator size="small" color={Colors.secondary} />
+                <Text style={styles.loadingPackagesText}>Loading packages...</Text>
+              </View>
+            ) : (
+              packages.map((pkg) => (
+                <TouchableOpacity
+                  key={pkg.id}
+                  style={[
+                    styles.packageCard,
+                    pkg.popular && styles.packageCardPopular,
+                    selectedPackage === pkg.id && styles.packageCardSelected,
+                  ]}
+                  onPress={() => handlePurchase(pkg)}
+                  disabled={isLoading}
+                  activeOpacity={0.7}
+                >
+                  {pkg.popular && (
+                    <View style={styles.popularBadge}>
+                      <Text style={styles.popularText}>Most Popular</Text>
+                    </View>
+                  )}
+                  <View style={styles.packageLeft}>
+                    <View style={styles.packageIcon}>
+                      <Ionicons
+                        name="diamond"
+                        size={24}
+                        color={pkg.popular ? Colors.secondary : Colors.primary}
+                      />
+                    </View>
+                    <View style={styles.packageInfo}>
+                      <Text style={styles.packageCoins}>{pkg.coins} Coins</Text>
+                      <Text style={styles.packagePrice}>{pkg.priceDisplay}</Text>
+                    </View>
                   </View>
-                )}
-                <View style={styles.packageLeft}>
-                  <View style={styles.packageIcon}>
+                  {selectedPackage === pkg.id ? (
+                    <ActivityIndicator size="small" color={Colors.secondary} />
+                  ) : (
                     <Ionicons
-                      name="diamond"
-                      size={24}
+                      name="arrow-forward-circle"
+                      size={28}
                       color={pkg.popular ? Colors.secondary : Colors.primary}
                     />
-                  </View>
-                  <View style={styles.packageInfo}>
-                    <Text style={styles.packageCoins}>{pkg.coins} Coins</Text>
-                    <Text style={styles.packagePrice}>₹{pkg.price}</Text>
-                  </View>
-                </View>
-                {selectedPackage === pkg.id ? (
-                  <ActivityIndicator size="small" color={Colors.secondary} />
-                ) : (
-                  <Ionicons
-                    name="arrow-forward-circle"
-                    size={28}
-                    color={pkg.popular ? Colors.secondary : Colors.primary}
-                  />
-                )}
-              </TouchableOpacity>
-            ))}
+                  )}
+                </TouchableOpacity>
+              ))
+            )}
           </ScrollView>
 
           {/* Footer Note */}
@@ -268,6 +336,15 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: Colors.text.secondary,
     marginBottom: 16,
+  },
+  loadingPackages: {
+    paddingVertical: 24,
+    alignItems: 'center',
+    gap: 8,
+  },
+  loadingPackagesText: {
+    fontSize: FontSizes.sm,
+    color: Colors.text.secondary,
   },
   packageCard: {
     flexDirection: 'row',

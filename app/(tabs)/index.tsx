@@ -190,15 +190,22 @@ export default function HomeScreen() {
     try {
       const randomHost = hosts[Math.floor(Math.random() * hosts.length)];
       const isVideo = Math.random() > 0.5;
+      const callId = `call-${Date.now()}`;
 
       router.push({
         pathname: '/calling',
         params: {
+          callId,
           hostId: randomHost.$id,
           hostName: randomHost.name,
           hostPicture: randomHost.profilePictureUrl,
           isVideo: isVideo ? '1' : '0',
-          costPerMin: isVideo ? randomHost.videoCostPerMin : randomHost.audioCostPerMin,
+          costPerMin: (isVideo
+            ? randomHost.videoCostPerMin
+            : randomHost.audioCostPerMin
+          )?.toString(),
+          audioRate: randomHost.audioCostPerMin?.toString(),
+          videoRate: randomHost.videoCostPerMin?.toString(),
         },
       });
     } catch (error: any) {
@@ -390,14 +397,18 @@ function HostCard({ host }: { host: AppwriteHost }) {
   };
 
   const handleCall = (isVideo: boolean) => {
+    const callId = `call-${Date.now()}`;
     router.push({
       pathname: '/calling',
       params: {
+        callId,
         hostId: host.$id,
         hostName: host.name,
         hostPicture: host.profilePictureUrl,
         isVideo: isVideo ? '1' : '0',
-        costPerMin: isVideo ? host.videoCostPerMin : host.audioCostPerMin,
+        costPerMin: (isVideo ? host.videoCostPerMin : host.audioCostPerMin)?.toString(),
+        audioRate: host.audioCostPerMin?.toString(),
+        videoRate: host.videoCostPerMin?.toString(),
       },
     });
   };

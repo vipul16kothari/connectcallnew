@@ -43,6 +43,16 @@ export interface AppwriteHost extends Models.Document {
   updatedAt: string;
 }
 
+export interface AppwriteHostEarnings {
+  audioSeconds: number;
+  videoSeconds: number;
+  audioAmount: number;
+  videoAmount: number;
+  totalAmount: number;
+  currency: 'INR';
+  recordedAt: string;
+}
+
 export interface AppwriteCall extends Models.Document {
   callId: string;
   userId: string;
@@ -53,6 +63,16 @@ export interface AppwriteCall extends Models.Document {
   duration: number; // in seconds
   coinsSpent: number;
   status: 'active' | 'completed' | 'cancelled';
+  audioCostPerMin?: number;
+  videoCostPerMin?: number;
+  billingSegments?: Array<{
+    type: 'audio' | 'video';
+    durationSeconds: number;
+    coinsExact: number;
+    coinsRounded: number;
+    durationExactSeconds?: number;
+  }>;
+  hostEarnings?: AppwriteHostEarnings;
   createdAt: string;
 }
 
@@ -65,6 +85,67 @@ export interface AppwriteTransaction extends Models.Document {
   paymentGateway?: 'razorpay' | 'cashfree';
   status: 'pending' | 'completed' | 'failed';
   createdAt: string;
+}
+
+export interface AppwriteCallPricingConfig extends Models.Document {
+  audioCostPerMin: number;
+  videoCostPerMin: number;
+  minimumDuration?: number;
+  warningThreshold?: number;
+  reconnectionTimeout?: number;
+}
+
+export interface AppwriteCoinPackageConfig extends Models.Document {
+  stage?: 'first' | 'repeat';
+  coins: number;
+  price: number;
+  priceDisplay?: string;
+  tag?: string;
+  tagEmoji?: string;
+  discount?: number;
+  popular?: boolean;
+  isLimitedOffer?: boolean;
+  order?: number;
+  description?: string;
+}
+
+export interface AppwriteQuickTopupPackage extends Models.Document {
+  coins: number;
+  price: number;
+  priceDisplay?: string;
+  popular?: boolean;
+  order?: number;
+}
+
+export interface ConfiguredCallPricing {
+  audioCostPerMin: number;
+  videoCostPerMin: number;
+  minimumDuration: number;
+  warningThreshold: number;
+  reconnectionTimeout: number;
+}
+
+export interface ConfiguredCoinPackage {
+  id: string;
+  coins: number;
+  priceDisplay: string;
+  priceValue: number;
+  tag?: string;
+  tagEmoji?: string;
+  discount?: number;
+  popular?: boolean;
+  isLimitedOffer?: boolean;
+  description?: string;
+  sortOrder: number;
+}
+
+export interface ConfiguredQuickTopupPackage {
+  id: string;
+  coins: number;
+  priceDisplay: string;
+  priceValue: number;
+  popular?: boolean;
+  sortOrder: number;
 }
 
 // Authentication Service
@@ -380,6 +461,8 @@ export class CallService {
     userId: string;
     hostId: string;
     callType: 'audio' | 'video';
+    audioCostPerMin?: number;
+    videoCostPerMin?: number;
   }): Promise<AppwriteCall> {
     try {
       const callDoc = await databases.createDocument(
@@ -395,6 +478,8 @@ export class CallService {
           duration: 0,
           coinsSpent: 0,
           status: 'active',
+          audioCostPerMin: data.audioCostPerMin,
+          videoCostPerMin: data.videoCostPerMin,
           createdAt: new Date().toISOString(),
         }
       );
@@ -411,7 +496,9 @@ export class CallService {
   async endCall(
     callDocumentId: string,
     duration: number,
-    coinsSpent: number
+    coinsSpent: number,
+    billingSegments?: AppwriteCall['billingSegments'],
+    hostEarnings?: AppwriteHostEarnings
   ): Promise<AppwriteCall> {
     try {
       const updatedCall = await databases.updateDocument(
@@ -423,6 +510,8 @@ export class CallService {
           duration,
           coinsSpent,
           status: 'completed',
+          billingSegments,
+          hostEarnings,
         }
       );
       return updatedCall as unknown as AppwriteCall;
@@ -451,6 +540,58 @@ export class CallService {
     } catch (error) {
       console.error('Error getting call history:', error);
       return [];
+    }
+  }
+
+  async updateCallType(
+    callDocumentId: string,
+    callType: 'audio' | 'video'
+  ): Promise<AppwriteCall | null> {
+    try {
+      const updatedCall = await databases.updateDocument(
+        APPWRITE_CONFIG.databaseId,
+        APPWRITE_CONFIG.collections.calls,
+        callDocumentId,
+        {
+          callType,
+        }
+      );
+      return updatedCall as unknown as AppwriteCall;
+    } catch (error) {
+      console.error('Error updating call type:', error);
+      return null;
+    }
+  }
+
+  async updateCallProgress(
+    callDocumentId: string,
+    data: {
+      duration?: number;
+      coinsSpent?: number;
+      billingSegments?: AppwriteCall['billingSegments'];
+    }
+  ): Promise<AppwriteCall | null> {
+    try {
+      const payload: Partial<AppwriteCall> = {
+        ...(typeof data.duration === 'number' ? { duration: data.duration } : {}),
+        ...(typeof data.coinsSpent === 'number' ? { coinsSpent: data.coinsSpent } : {}),
+        ...(data.billingSegments ? { billingSegments: data.billingSegments } : {}),
+      };
+
+      if (Object.keys(payload).length === 0) {
+        return null;
+      }
+
+      const updatedCall = await databases.updateDocument(
+        APPWRITE_CONFIG.databaseId,
+        APPWRITE_CONFIG.collections.calls,
+        callDocumentId,
+        payload
+      );
+      return updatedCall as unknown as AppwriteCall;
+    } catch (error) {
+      console.error('Error updating call progress:', error);
+      return null;
     }
   }
 }
@@ -507,6 +648,171 @@ export class TransactionService {
       return [];
     }
   }
+
+  async hasCompletedPurchase(userId: string): Promise<boolean> {
+    try {
+      const response = await databases.listDocuments(
+        APPWRITE_CONFIG.databaseId,
+        APPWRITE_CONFIG.collections.transactions,
+        [
+          Query.equal('userId', userId),
+          Query.equal('type', 'purchase'),
+          Query.equal('status', 'completed'),
+          Query.limit(1),
+        ]
+      );
+      return response.total > 0;
+    } catch (error) {
+      console.error('Error checking purchase history:', error);
+      return false;
+    }
+  }
+}
+
+function isPlaceholderId(value: string | undefined) {
+  return !value || value.startsWith('YOUR_');
+}
+
+export class ConfigService {
+  private pricingCache: { data: ConfiguredCallPricing; fetchedAt: number } | null = null;
+  private coinPackageCache = new Map<string, { data: ConfiguredCoinPackage[]; fetchedAt: number }>();
+  private quickTopupCache: { data: ConfiguredQuickTopupPackage[]; fetchedAt: number } | null = null;
+  private readonly cacheTtlMs = 5 * 60 * 1000;
+
+  private mapPricingConfig(doc: AppwriteCallPricingConfig): ConfiguredCallPricing {
+    return {
+      audioCostPerMin: Number(doc.audioCostPerMin ?? 10),
+      videoCostPerMin: Number(doc.videoCostPerMin ?? 60),
+      minimumDuration: Number(doc.minimumDuration ?? 60),
+      warningThreshold: Number(doc.warningThreshold ?? 60),
+      reconnectionTimeout: Number(doc.reconnectionTimeout ?? 45),
+    };
+  }
+
+  private mapCoinPackage(doc: AppwriteCoinPackageConfig): ConfiguredCoinPackage {
+    const priceValue = Number(doc.price ?? 0);
+    const priceDisplay = doc.priceDisplay || (priceValue ? `₹${priceValue}` : '');
+
+    return {
+      id: doc.$id,
+      coins: Number(doc.coins ?? 0),
+      priceDisplay,
+      priceValue,
+      tag: doc.tag || undefined,
+      tagEmoji: doc.tagEmoji || undefined,
+      discount: typeof doc.discount === 'number' ? doc.discount : undefined,
+      popular: !!doc.popular,
+      isLimitedOffer: !!doc.isLimitedOffer,
+      description: doc.description || undefined,
+      sortOrder: typeof doc.order === 'number' ? doc.order : Number.MAX_SAFE_INTEGER,
+    };
+  }
+
+  private mapQuickTopup(doc: AppwriteQuickTopupPackage): ConfiguredQuickTopupPackage {
+    const priceValue = Number(doc.price ?? 0);
+    const priceDisplay = doc.priceDisplay || (priceValue ? `₹${priceValue}` : '');
+
+    return {
+      id: doc.$id,
+      coins: Number(doc.coins ?? 0),
+      priceDisplay,
+      priceValue,
+      popular: !!doc.popular,
+      sortOrder: typeof doc.order === 'number' ? doc.order : Number.MAX_SAFE_INTEGER,
+    };
+  }
+
+  async getCallPricingConfig(forceRefresh: boolean = false): Promise<ConfiguredCallPricing | null> {
+    if (this.pricingCache && !forceRefresh) {
+      const isValid = Date.now() - this.pricingCache.fetchedAt < this.cacheTtlMs;
+      if (isValid) {
+        return this.pricingCache.data;
+      }
+    }
+
+    if (isPlaceholderId(APPWRITE_CONFIG.collections.callPricing)) {
+      return null;
+    }
+
+    try {
+      const response = await databases.listDocuments(
+        APPWRITE_CONFIG.databaseId,
+        APPWRITE_CONFIG.collections.callPricing,
+        [Query.limit(1)]
+      );
+
+      if (!response.documents.length) {
+        return null;
+      }
+
+      const pricing = this.mapPricingConfig(
+        response.documents[0] as unknown as AppwriteCallPricingConfig
+      );
+      this.pricingCache = { data: pricing, fetchedAt: Date.now() };
+      return pricing;
+    } catch (error) {
+      console.error('Error fetching call pricing config:', error);
+      return null;
+    }
+  }
+
+  async getCoinPackages(stage: 'first' | 'repeat'): Promise<ConfiguredCoinPackage[]> {
+    const cacheKey = `coin-${stage}`;
+    const cached = this.coinPackageCache.get(cacheKey);
+    if (cached && Date.now() - cached.fetchedAt < this.cacheTtlMs) {
+      return cached.data;
+    }
+
+    if (isPlaceholderId(APPWRITE_CONFIG.collections.coinPackages)) {
+      return [];
+    }
+
+    try {
+      const response = await databases.listDocuments(
+        APPWRITE_CONFIG.databaseId,
+        APPWRITE_CONFIG.collections.coinPackages,
+        [Query.equal('stage', stage), Query.orderAsc('order')]
+      );
+
+      const packages = (response.documents as unknown as AppwriteCoinPackageConfig[])
+        .map((doc) => this.mapCoinPackage(doc))
+        .sort((a, b) => a.sortOrder - b.sortOrder);
+
+      this.coinPackageCache.set(cacheKey, { data: packages, fetchedAt: Date.now() });
+      return packages;
+    } catch (error) {
+      console.error('Error fetching coin packages:', error);
+      return [];
+    }
+  }
+
+  async getQuickTopupPackages(): Promise<ConfiguredQuickTopupPackage[]> {
+    if (this.quickTopupCache && Date.now() - this.quickTopupCache.fetchedAt < this.cacheTtlMs) {
+      return this.quickTopupCache.data;
+    }
+
+    if (isPlaceholderId(APPWRITE_CONFIG.collections.quickTopups)) {
+      return [];
+    }
+
+    try {
+      const response = await databases.listDocuments(
+        APPWRITE_CONFIG.databaseId,
+        APPWRITE_CONFIG.collections.quickTopups,
+        [Query.orderAsc('order')]
+      );
+
+      const packages = (response.documents as unknown as AppwriteQuickTopupPackage[])
+        .map((doc) => this.mapQuickTopup(doc))
+        .sort((a, b) => a.sortOrder - b.sortOrder);
+
+      this.quickTopupCache = { data: packages, fetchedAt: Date.now() };
+      return packages;
+    } catch (error) {
+      console.error('Error fetching quick top-up packages:', error);
+      return [];
+    }
+  }
 }
 
 // Export service instances
@@ -515,3 +821,4 @@ export const userService = new UserService();
 export const hostService = new HostService();
 export const callService = new CallService();
 export const transactionService = new TransactionService();
+export const configService = new ConfigService();

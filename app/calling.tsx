@@ -1,13 +1,14 @@
-import { useState, useEffect, useRef } from 'react';
+
+import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
   StyleSheet,
+  ImageBackground,
   Image,
   TouchableOpacity,
   SafeAreaView,
-  Animated,
-  ImageBackground,
+  ActivityIndicator,
   Alert,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -16,160 +17,519 @@ import { FontSizes } from '@/constants/Fonts';
 import { Ionicons } from '@expo/vector-icons';
 import { useUser } from '@/contexts/UserContext';
 import { useToast } from '@/contexts/ToastContext';
-import { calculateMaxDuration, calculateCoinsSpent, ConnectionMonitor } from '@/services/calling';
 import InCallRechargeSheet from '@/components/InCallRechargeSheet';
+import { parseError } from '@/utils/errorHandler';
+import {
+  calculateMaxDuration,
+  ConnectionMonitor,
+  callManager,
+  AUDIO_COST_PER_MIN,
+  VIDEO_COST_PER_MIN,
+} from '@/services/calling';
+import type { StreamCallSession, StreamUIComponents } from '@/services/stream';
+import * as StreamService from '@/services/stream';
 
-type CallState = 'ringing' | 'inCall' | 'reconnecting' | 'ending';
+type CallPhase = 'initializing' | 'active' | 'reconnecting' | 'ending' | 'ended' | 'error';
+
 type ConnectionState = {
   isConnected: boolean;
   reconnectTimeRemaining: number;
 };
 
+type CallScreenParams = {
+  hostId?: string | string[];
+  hostName?: string | string[];
+  hostPicture?: string | string[];
+  isVideo?: string | string[];
+  costPerMin?: string | string[];
+  audioRate?: string | string[];
+  videoRate?: string | string[];
+  callId?: string | string[];
+};
+
+const AUDIO_PLACEHOLDER = 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=800&q=80';
+
 export default function CallingScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<CallScreenParams>();
   const { user } = useUser();
-  const { showError, showSuccess } = useToast();
-  const { hostName, hostPicture, isVideo, costPerMin } = useLocalSearchParams();
+  const { showError, showSuccess, showWarning, showInfo } = useToast();
 
-  const [callState, setCallState] = useState<CallState>('ringing');
+  const hostId = Array.isArray(params.hostId) ? params.hostId[0] : params.hostId;
+  const hostName = Array.isArray(params.hostName) ? params.hostName[0] : params.hostName;
+  const hostPicture = Array.isArray(params.hostPicture) ? params.hostPicture[0] : params.hostPicture;
+  const callIdParam = Array.isArray(params.callId) ? params.callId[0] : params.callId;
+  const isVideoParam = Array.isArray(params.isVideo) ? params.isVideo[0] : params.isVideo;
+  const costPerMinParam = Array.isArray(params.costPerMin) ? params.costPerMin[0] : params.costPerMin;
+  const audioRateParam = Array.isArray(params.audioRate) ? params.audioRate[0] : params.audioRate;
+  const videoRateParam = Array.isArray(params.videoRate) ? params.videoRate[0] : params.videoRate;
+
+  const initialCallType: 'audio' | 'video' = isVideoParam === '1' ? 'video' : 'audio';
+  const parsedAudioRate = Number.parseInt(audioRateParam || costPerMinParam || '', 10);
+  const parsedVideoRate = Number.parseInt(videoRateParam || '', 10);
+  const defaultAudioRate = Number.isFinite(parsedAudioRate) ? parsedAudioRate : AUDIO_COST_PER_MIN;
+  const defaultVideoRate = Number.isFinite(parsedVideoRate) ? parsedVideoRate : VIDEO_COST_PER_MIN;
+  const hostDisplayName = hostName || 'Host';
+  const hostImage = hostPicture || AUDIO_PLACEHOLDER;
+
+  const callIdRef = useRef<string>(callIdParam || `call-${Date.now()}`);
+  const hasStartedRef = useRef(false);
+  const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const connectionMonitor = useRef(new ConnectionMonitor());
+  const callStartedRef = useRef(false);
+  const isEndingRef = useRef(false);
+  const isVideoEnabledRef = useRef(initialCallType === 'video');
+  const walletBalanceRef = useRef(0);
+  const wasDisconnectedRef = useRef(false);
+  const billingSyncFailedRef = useRef(false);
+  const pricingRef = useRef({
+    audioCostPerMin: defaultAudioRate,
+    videoCostPerMin: defaultVideoRate,
+    warningThreshold: 60,
+    reconnectionTimeout: 45,
+  });
+
+  const [phase, setPhase] = useState<CallPhase>('initializing');
+  const [session, setSession] = useState<StreamCallSession | null>(null);
+  const [uiComponents, setUiComponents] = useState<StreamUIComponents | null>(null);
   const [isMuted, setIsMuted] = useState(false);
-  const [cameraFlipped, setCameraFlipped] = useState(false);
-  const [remainingSeconds, setRemainingSeconds] = useState(0); // Changed: countdown timer
+  const [currentCallType, setCurrentCallType] = useState<'audio' | 'video'>(initialCallType);
+  const [remainingSeconds, setRemainingSeconds] = useState(0);
   const [isLowTime, setIsLowTime] = useState(false);
   const [showRechargeSheet, setShowRechargeSheet] = useState(false);
   const [connectionState, setConnectionState] = useState<ConnectionState>({
     isConnected: true,
     reconnectTimeRemaining: 0,
   });
-  const [currentCallType, setCurrentCallType] = useState<'audio' | 'video'>(
-    isVideo === '1' ? 'video' : 'audio'
+  const [initializationError, setInitializationError] = useState<string | null>(null);
+  const [pricing, setPricing] = useState(pricingRef.current);
+
+  const currentRate =
+    currentCallType === 'video' ? pricing.videoCostPerMin : pricing.audioCostPerMin;
+  const showAudioPlaceholder = currentCallType === 'audio' || !session || !uiComponents;
+
+  const finalizeCall = useCallback(
+    async (reason: 'user' | 'timeout' | 'connection' | 'remote' | 'error', message?: string) => {
+      if (isEndingRef.current) return;
+      isEndingRef.current = true;
+
+      connectionMonitor.current.stop();
+      if (countdownIntervalRef.current) {
+        clearInterval(countdownIntervalRef.current);
+        countdownIntervalRef.current = null;
+      }
+
+      setPhase('ending');
+
+      try {
+        await StreamService.disconnectStreamClient();
+      } catch (error) {
+        console.warn('Failed to disconnect Stream client', error);
+      }
+
+      let coinsSpent = 0;
+      if (callStartedRef.current && user?.authUser) {
+        try {
+          const result = await callManager.endCall(user.authUser.$id);
+          coinsSpent = result.coinsSpent;
+          if (!result.success) {
+            showWarning('Call ended, but billing confirmation failed.');
+          }
+        } catch (billingError) {
+          console.error('Failed to finalize call billing', billingError);
+          showWarning('Call ended, but coins may not have been deducted correctly.');
+        }
+      }
+
+      switch (reason) {
+        case 'timeout':
+          showError('Call ended: Out of coins');
+          break;
+        case 'connection':
+          showError('Call ended: Connection lost');
+          break;
+        case 'remote':
+          showWarning('Host ended the call.');
+          break;
+        case 'user':
+          if (coinsSpent > 0) {
+            showSuccess(`Call ended. ${coinsSpent} coins spent.`);
+          } else {
+            showSuccess('Call ended.');
+          }
+          break;
+        case 'error':
+          if (message) {
+            showError(message);
+          } else {
+            showError('Call ended unexpectedly.');
+          }
+          break;
+      }
+
+      setTimeout(() => {
+        router.replace('/(tabs)');
+      }, 1200);
+    },
+    [router, showError, showSuccess, showWarning, user?.authUser]
   );
-  const [upgradeRequestState, setUpgradeRequestState] = useState<
-    'idle' | 'sending' | 'pending'
-  >('idle');
-  const [upgradeAttempts, setUpgradeAttempts] = useState(0);
 
-  const pulseAnim = useRef(new Animated.Value(1)).current;
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-  const timerAnim = useRef(new Animated.Value(1)).current;
-  const connectionMonitor = useRef(new ConnectionMonitor());
-  const costPerMinNum = parseInt(costPerMin as string, 10) || 10;
+  const updateBillingState = useCallback(() => {
+    const coinsRemaining = callManager.getCoinsRemaining();
+    const currentPricing = pricingRef.current;
+    const activeRate = isVideoEnabledRef.current
+      ? currentPricing.videoCostPerMin
+      : currentPricing.audioCostPerMin;
 
-  // Initialize countdown timer based on wallet balance
-  useEffect(() => {
-    if (user?.userProfile) {
-      const balance = user.userProfile.walletBalance || 0;
-      const currentCost = currentCallType === 'video' ? 60 : costPerMinNum;
-      const duration = calculateMaxDuration(balance, currentCost);
-      setRemainingSeconds(duration.maxDurationSeconds);
+    const secondsRemaining =
+      activeRate > 0 ? Math.floor((coinsRemaining / activeRate) * 60) : 0;
+
+    if (secondsRemaining <= currentPricing.warningThreshold && secondsRemaining > 0) {
+      setIsLowTime(true);
+    } else if (secondsRemaining > currentPricing.warningThreshold) {
+      setIsLowTime(false);
     }
-  }, [user?.userProfile, costPerMinNum, currentCallType]);
 
-  // Auto-transition from ringing to in-call after 3 seconds
+    setRemainingSeconds(Math.max(0, secondsRemaining));
+
+    if (callStartedRef.current) {
+      callManager
+        .syncIncrementalBilling()
+        .then(({ coinsDeducted }) => {
+          if (coinsDeducted > 0) {
+            walletBalanceRef.current = Math.max(0, walletBalanceRef.current - coinsDeducted);
+          }
+          billingSyncFailedRef.current = false;
+        })
+        .catch((error) => {
+          if (!billingSyncFailedRef.current) {
+            console.error('Failed to sync in-call billing', error);
+          }
+          billingSyncFailedRef.current = true;
+        });
+    }
+
+    if (coinsRemaining <= 0.01 && callStartedRef.current && !isEndingRef.current) {
+      finalizeCall('timeout');
+    }
+  }, [finalizeCall]);
+
+  const startBillingLoop = useCallback(() => {
+    if (countdownIntervalRef.current) {
+      clearInterval(countdownIntervalRef.current);
+    }
+
+    updateBillingState();
+    countdownIntervalRef.current = setInterval(() => {
+      updateBillingState();
+    }, 1000) as NodeJS.Timeout;
+  }, [updateBillingState]);
+
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setCallState('inCall');
-      Animated.timing(fadeAnim, {
-        toValue: 1,
-        duration: 500,
-        useNativeDriver: true,
-      }).start();
+    isVideoEnabledRef.current = currentCallType === 'video';
+  }, [currentCallType]);
 
-      // Start connection monitoring
-      connectionMonitor.current.start((status) => {
-        setConnectionState(status);
-        if (!status.isConnected) {
-          setCallState('reconnecting');
-        } else if (callState === 'reconnecting') {
-          setCallState('inCall');
+  useEffect(() => {
+    pricingRef.current = pricing;
+    connectionMonitor.current.updateTimeout(pricing.reconnectionTimeout);
+  }, [pricing]);
+
+  useEffect(() => {
+    if (callStartedRef.current) {
+      updateBillingState();
+    }
+  }, [currentCallType, updateBillingState]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    StreamService.loadUIComponents()
+      .then((components) => {
+        if (mounted) {
+          setUiComponents(components);
+        }
+      })
+      .catch((error) => {
+        console.error('Failed to load Stream components', error);
+        if (mounted) {
+          const message =
+            'Video calling components could not be loaded. Please ensure native dependencies are installed.';
+          setInitializationError(message);
+          setPhase('error');
+          showError(message);
+          setTimeout(() => router.replace('/(tabs)'), 1500);
         }
       });
-    }, 3000);
 
     return () => {
-      clearTimeout(timer);
-      connectionMonitor.current.stop();
+      mounted = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fadeAnim]);
+  }, [router, showError]);
 
-  // Reverse countdown timer with auto-termination
   useEffect(() => {
-    if (callState === 'inCall' || callState === 'reconnecting') {
-      const interval = setInterval(() => {
-        setRemainingSeconds((prev) => {
-          const newRemaining = prev - 1;
+    if (hasStartedRef.current) {
+      return;
+    }
 
-          // Check if time is running out (less than 60 seconds)
-          if (newRemaining <= 60 && newRemaining > 0) {
-            setIsLowTime(true);
-          }
+    if (initializationError) {
+      return;
+    }
 
-          // Auto-terminate when timer reaches 00:00
-          if (newRemaining <= 0) {
-            handleTimeExpired();
-            return 0;
-          }
+    if (!user?.authUser) {
+      return;
+    }
 
-          return newRemaining;
+    if (!hostId) {
+      const message = 'Missing host information for this call.';
+      setInitializationError(message);
+      setPhase('error');
+      showError(message);
+      setTimeout(() => router.replace('/(tabs)'), 1200);
+      return;
+    }
+
+    hasStartedRef.current = true;
+    let mounted = true;
+    const monitor = connectionMonitor.current;
+
+    const initializeCall = async () => {
+      try {
+        setPhase('initializing');
+
+        const validation = await callManager.validateCall(
+          user.authUser.$id,
+          hostId,
+          initialCallType === 'video'
+        );
+
+        if (!mounted) {
+          return;
+        }
+
+        if (!validation.valid) {
+          const message = validation.error || 'Unable to start call. Please try again later.';
+          setInitializationError(message);
+          setPhase('error');
+          showError(message);
+          setTimeout(() => router.replace('/(tabs)'), 1500);
+          return;
+        }
+
+        if (validation.pricing) {
+          pricingRef.current = validation.pricing;
+          setPricing(validation.pricing);
+        }
+
+        if (typeof validation.walletBalance === 'number') {
+          walletBalanceRef.current = validation.walletBalance;
+        } else if (typeof user.userProfile?.walletBalance === 'number') {
+          walletBalanceRef.current = user.userProfile.walletBalance;
+        }
+
+        const initialRateForDuration =
+          initialCallType === 'video'
+            ? pricingRef.current.videoCostPerMin
+            : pricingRef.current.audioCostPerMin;
+
+        const maxDurationSeconds =
+          typeof validation.maxDuration === 'number'
+            ? validation.maxDuration
+            : calculateMaxDuration(
+                walletBalanceRef.current,
+                initialRateForDuration,
+                pricingRef.current.warningThreshold
+              ).maxDurationSeconds;
+
+        setRemainingSeconds(maxDurationSeconds);
+        setIsLowTime(
+          maxDurationSeconds > 0 && maxDurationSeconds <= pricingRef.current.warningThreshold
+        );
+
+        const sessionResult = await StreamService.startCallSession({
+          callId: callIdRef.current,
+          userId: user.authUser.$id,
+          userName: user.userProfile?.name || user.authUser.name || 'User',
+          userImage: undefined,
+          hostId,
+          hostName: hostDisplayName,
+          hostImage: hostImage,
+          isVideo: initialCallType === 'video',
         });
-      }, 1000);
 
-      return () => clearInterval(interval);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [callState]);
+        if (!mounted) {
+          await StreamService.disconnectStreamClient().catch(() => {});
+          return;
+        }
 
-  // Connection timeout - auto end call
+        setSession(sessionResult);
+
+        const startResult = await callManager.startCall(
+          user.authUser.$id,
+          hostId,
+          callIdRef.current,
+          initialCallType === 'video'
+        );
+
+        if (!startResult.success) {
+          throw new Error(startResult.error || 'Failed to register call.');
+        }
+
+        callStartedRef.current = true;
+        setIsMuted(false);
+        wasDisconnectedRef.current = false;
+        startBillingLoop();
+
+        monitor.start((status) => {
+          setConnectionState(status);
+          setPhase((previous) => {
+            if (!status.isConnected) {
+              return 'reconnecting';
+            }
+            if (previous === 'reconnecting') {
+              return 'active';
+            }
+            return previous;
+          });
+
+          if (!status.isConnected) {
+            wasDisconnectedRef.current = true;
+            if (status.reconnectTimeRemaining === 0) {
+              finalizeCall('connection');
+            }
+            return;
+          }
+
+          if (wasDisconnectedRef.current) {
+            wasDisconnectedRef.current = false;
+            StreamService.reconnectCurrentCall()
+              .then(() => {
+                updateBillingState();
+              })
+              .catch((reconnectError) => {
+                console.error('Failed to restore call after reconnection', reconnectError);
+                finalizeCall('error', 'Unable to restore the call after a disconnect.');
+              });
+          }
+        });
+
+        setPhase('active');
+      } catch (error) {
+        console.error('Failed to start call', error);
+        const parsed = parseError(error);
+        setInitializationError(parsed.message);
+        setPhase('error');
+        showError(parsed.message);
+        await StreamService.disconnectStreamClient().catch(() => {});
+        setTimeout(() => router.replace('/(tabs)'), 1500);
+      }
+    };
+
+    initializeCall();
+
+    return () => {
+      mounted = false;
+      monitor.stop();
+      if (countdownIntervalRef.current) {
+        clearInterval(countdownIntervalRef.current);
+        countdownIntervalRef.current = null;
+      }
+      StreamService.disconnectStreamClient().catch(() => {});
+    };
+  }, [
+    finalizeCall,
+    hostDisplayName,
+    hostId,
+    hostImage,
+    initialCallType,
+    initializationError,
+    router,
+    showError,
+    startBillingLoop,
+    updateBillingState,
+    user?.authUser,
+    user?.userProfile?.name,
+    user?.userProfile?.walletBalance,
+  ]);
+
   useEffect(() => {
-    if (!connectionState.isConnected && connectionState.reconnectTimeRemaining === 0) {
-      handleConnectionTimeout();
+    if (!session) {
+      return;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connectionState]);
 
-  // Pulsing animation for ringing state
-  useEffect(() => {
-    if (callState === 'ringing') {
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(pulseAnim, {
-            toValue: 1.1,
-            duration: 1000,
-            useNativeDriver: true,
-          }),
-          Animated.timing(pulseAnim, {
-            toValue: 1,
-            duration: 1000,
-            useNativeDriver: true,
-          }),
-        ])
-      ).start();
+    const unsubscribe = session.call.on('call.ended', () => {
+      finalizeCall('remote');
+    });
+
+    return () => {
+      if (typeof unsubscribe === 'function') {
+        unsubscribe();
+      }
+    };
+  }, [session, finalizeCall]);
+
+  const handleToggleMute = async () => {
+    const nextMuted = !isMuted;
+    setIsMuted(nextMuted);
+
+    try {
+      await StreamService.setMicrophoneEnabled(!nextMuted);
+    } catch (error) {
+      setIsMuted(!nextMuted);
+      const parsed = parseError(error);
+      showError(parsed.message);
     }
-  }, [callState, pulseAnim]);
-
-  const formatTime = (totalSeconds: number) => {
-    const mins = Math.floor(totalSeconds / 60);
-    const secs = totalSeconds % 60;
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const handleTimeExpired = () => {
-    setCallState('ending');
-    connectionMonitor.current.stop();
-    showError('Call ended: Out of coins');
-    setTimeout(() => {
-      router.replace('/(tabs)');
-    }, 1500);
+  const handleToggleVideo = async () => {
+    const previousType = currentCallType;
+    const nextType: 'audio' | 'video' = previousType === 'video' ? 'audio' : 'video';
+
+    if (nextType === 'video') {
+      const requiredCoins = pricingRef.current.videoCostPerMin * 2;
+      const coinsRemaining = callManager.getCoinsRemaining();
+      if (coinsRemaining < requiredCoins) {
+        showWarning(
+          `Switching to video requires at least ${requiredCoins} coins. Please recharge to continue.`
+        );
+        setShowRechargeSheet(true);
+        return;
+      }
+    }
+
+    setCurrentCallType(nextType);
+
+    try {
+      await StreamService.setCameraEnabled(nextType === 'video');
+      if (callStartedRef.current) {
+        await callManager.switchCallType(nextType === 'video');
+        updateBillingState();
+      }
+    } catch (error) {
+      setCurrentCallType(previousType);
+      const parsed = parseError(error);
+      if (parsed.message.toLowerCase().includes('insufficient')) {
+        showWarning(parsed.message);
+        if (nextType === 'video') {
+          setShowRechargeSheet(true);
+        }
+      } else {
+        showError(parsed.message);
+      }
+    }
   };
 
-  const handleConnectionTimeout = () => {
-    setCallState('ending');
-    connectionMonitor.current.stop();
-    showError('Call ended: Connection lost');
-    setTimeout(() => {
-      router.replace('/(tabs)');
-    }, 1500);
+  const handleFlipCamera = async () => {
+    if (currentCallType !== 'video') {
+      showInfo('Enable video to flip the camera.');
+      return;
+    }
+
+    try {
+      await StreamService.flipCamera();
+    } catch (error) {
+      const parsed = parseError(error);
+      showError(parsed.message);
+    }
   };
 
   const handleEndCall = () => {
@@ -178,23 +538,7 @@ export default function CallingScreen() {
       {
         text: 'End Call',
         style: 'destructive',
-        onPress: () => {
-          setCallState('ending');
-          connectionMonitor.current.stop();
-
-          // Calculate elapsed time and coins spent
-          const initialBalance = user?.userProfile?.walletBalance || 0;
-          const initialCost = isVideo === '1' ? 60 : costPerMinNum;
-          const initialDuration = calculateMaxDuration(initialBalance, initialCost).maxDurationSeconds;
-          const elapsedSeconds = initialDuration - remainingSeconds;
-          const currentCost = currentCallType === 'video' ? 60 : costPerMinNum;
-          const coinsSpent = calculateCoinsSpent(elapsedSeconds, currentCost);
-          showSuccess(`Call ended. ${coinsSpent} coins spent.`);
-
-          setTimeout(() => {
-            router.replace('/(tabs)');
-          }, 1000);
-        },
+        onPress: () => finalizeCall('user'),
       },
     ]);
   };
@@ -203,113 +547,43 @@ export default function CallingScreen() {
     setShowRechargeSheet(true);
   };
 
-  const handleRechargeSuccess = (amount: number) => {
-    // Extend call duration based on current call type
-    const currentCost = currentCallType === 'video' ? 60 : costPerMinNum;
-    const additionalSeconds = Math.floor((amount / currentCost) * 60);
-    setRemainingSeconds((prev) => prev + additionalSeconds);
+  const handleRechargeSuccess = (coins: number) => {
+    walletBalanceRef.current += coins;
+    callManager.addCoins(coins);
     setIsLowTime(false);
-    showSuccess(`${amount} coins added! Call extended.`);
+    updateBillingState();
+    showSuccess(`${coins} coins added! Call extended.`);
   };
 
-  const handleUpgradeToVideo = () => {
-    if (upgradeAttempts >= 3) {
-      showError('Maximum upgrade requests reached for this call');
-      return;
-    }
-
-    setUpgradeRequestState('sending');
-    setUpgradeAttempts((prev) => prev + 1);
-
-    // Simulate sending request to host
-    setTimeout(() => {
-      setUpgradeRequestState('pending');
-      showSuccess('Upgrade request sent to host');
-
-      // Simulate host response after 5 seconds (randomly accept or reject for testing)
-      setTimeout(() => {
-        const isAccepted = Math.random() > 0.3; // 70% chance of acceptance
-        if (isAccepted) {
-          handleUpgradeAccepted();
-        } else {
-          handleUpgradeRejected();
-        }
-      }, 5000);
-    }, 500);
+  const formatTime = (totalSeconds: number) => {
+    const mins = Math.floor(totalSeconds / 60);
+    const secs = Math.max(0, totalSeconds % 60);
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const handleUpgradeAccepted = () => {
-    const currentRemaining = remainingSeconds;
-
-    // Change call type to video
-    setCurrentCallType('video');
-    setUpgradeRequestState('idle');
-
-    // Recalculate and animate timer
-    recalculateTimerForVideoUpgrade(currentRemaining);
-
-    showSuccess('🎥 Upgraded to video call!');
-  };
-
-  const handleUpgradeRejected = () => {
-    setUpgradeRequestState('idle');
-
-    // Show rejection notification
-    showError('Host declined video upgrade');
-
-    // Check if max attempts reached
-    if (upgradeAttempts >= 3) {
-      showError('Maximum upgrade requests reached');
-    }
-  };
-
-  const recalculateTimerForVideoUpgrade = (currentRemaining: number) => {
-    // Calculate remaining coins based on audio rate
-    const elapsedAudioSeconds =
-      calculateMaxDuration(user?.userProfile?.walletBalance || 0, costPerMinNum).maxDurationSeconds - currentRemaining;
-    const coinsSpent = calculateCoinsSpent(elapsedAudioSeconds, costPerMinNum);
-    const remainingCoins = (user?.userProfile?.walletBalance || 0) - coinsSpent;
-
-    // Calculate new duration at video rate (60 coins/min)
-    const newDuration = calculateMaxDuration(remainingCoins, 60);
-
-    // Animate timer spin-down
-    const steps = 30; // Number of animation frames
-    const decrement = (currentRemaining - newDuration.maxDurationSeconds) / steps;
-    let currentStep = 0;
-
-    const animationInterval = setInterval(() => {
-      currentStep++;
-      if (currentStep >= steps) {
-        clearInterval(animationInterval);
-        setRemainingSeconds(newDuration.maxDurationSeconds);
-      } else {
-        setRemainingSeconds(Math.floor(currentRemaining - (decrement * currentStep)));
-      }
-    }, 30); // 30ms per frame = ~1 second total animation
-  };
-
-  if (callState === 'ringing') {
+  if (phase === 'error' && initializationError) {
     return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.ringingContainer}>
-          <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
-            <Image
-              source={{ uri: hostPicture as string }}
-              style={styles.ringingProfilePicture}
-            />
-          </Animated.View>
-          <Text style={styles.ringingName}>{hostName}</Text>
-          <Text style={styles.ringingStatus}>Connecting...</Text>
-          <View style={styles.ringingDots}>
-            <View style={[styles.dot, styles.dotAnimated]} />
-            <View style={[styles.dot, styles.dotAnimated]} />
-            <View style={[styles.dot, styles.dotAnimated]} />
-          </View>
+      <SafeAreaView style={styles.errorContainer}>
+        <View style={styles.errorCard}>
+          <Ionicons name="alert-circle" size={48} color={Colors.error} />
+          <Text style={styles.errorTitle}>Unable to start call</Text>
+          <Text style={styles.errorMessage}>{initializationError}</Text>
+          <TouchableOpacity
+            style={styles.errorButton}
+            onPress={() => router.replace('/(tabs)')}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.errorButtonText}>Back to home</Text>
+          </TouchableOpacity>
         </View>
       </SafeAreaView>
     );
   }
+
+  const StreamVideoComponent = uiComponents?.StreamVideo;
+  const StreamCallComponent = uiComponents?.StreamCall;
+  const StreamThemeComponent = uiComponents?.StreamTheme;
+  const CallContentComponent = uiComponents?.CallContent;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -319,166 +593,150 @@ export default function CallingScreen() {
         onSuccess={handleRechargeSuccess}
       />
 
-      <ImageBackground
-        source={{ uri: hostPicture as string }}
-        style={styles.videoBackground}
-        blurRadius={isVideo === '1' ? 0 : 20}
-      >
-        <View style={styles.overlay}>
-          {/* Connection Overlay */}
-          {connectionState.isConnected === false && (
-            <View style={styles.reconnectionOverlay}>
-              <View style={styles.reconnectionCard}>
-                <Ionicons name="cloud-offline" size={48} color={Colors.warning} />
-                <Text style={styles.reconnectionTitle}>Connection Lost</Text>
-                <Text style={styles.reconnectionText}>
-                  Reconnecting... {connectionState.reconnectTimeRemaining}s
-                </Text>
-                <Text style={styles.reconnectionHint}>
-                  Call will end if not reconnected in time
-                </Text>
-              </View>
-            </View>
-          )}
+      <View style={styles.mediaContainer}>
+        {session && StreamVideoComponent && StreamCallComponent && StreamThemeComponent && CallContentComponent ? (
+          <StreamVideoComponent client={session.client}>
+            <StreamCallComponent call={session.call}>
+              <StreamThemeComponent>
+                <CallContentComponent CallControls={null} />
+              </StreamThemeComponent>
+            </StreamCallComponent>
+          </StreamVideoComponent>
+        ) : null}
 
-          {/* Top Info Bar */}
-          <Animated.View style={[styles.topBar, { opacity: fadeAnim }]}>
-            {/* Countdown Timer - Central Focus */}
-            <Animated.View
+        {showAudioPlaceholder && (
+          <ImageBackground
+            source={{ uri: hostImage }}
+            style={styles.audioBackground}
+            blurRadius={currentCallType === 'audio' ? 18 : 8}
+          >
+            <View style={styles.audioOverlay} pointerEvents="none">
+              <Image source={{ uri: hostImage }} style={styles.audioImage} />
+              <Text style={styles.audioLabel}>{hostDisplayName}</Text>
+              <Text style={styles.audioSubtitle}>
+                {session ? (currentCallType === 'audio' ? 'Audio call in progress' : 'Connecting...') : 'Connecting...'}
+              </Text>
+            </View>
+          </ImageBackground>
+        )}
+
+        {phase === 'reconnecting' && (
+          <View style={styles.reconnectionOverlay}>
+            <View style={styles.reconnectionCard}>
+              <Ionicons name="cloud-offline" size={42} color={Colors.warning} />
+              <Text style={styles.reconnectionTitle}>Connection lost</Text>
+              <Text style={styles.reconnectionText}>
+                Reconnecting... {connectionState.reconnectTimeRemaining}s
+              </Text>
+              <Text style={styles.reconnectionHint}>
+                Call will end if the network doesn’t recover.
+              </Text>
+            </View>
+          </View>
+        )}
+
+        {phase === 'initializing' && (
+          <View style={styles.loadingOverlay}>
+            <ActivityIndicator size="large" color={Colors.white} />
+            <Text style={styles.loadingText}>Connecting to call...</Text>
+          </View>
+        )}
+      </View>
+
+      <View style={styles.overlay} pointerEvents="box-none">
+        <View style={styles.topBar}>
+          <View
+            style={[
+              styles.countdownContainer,
+              isLowTime && styles.countdownContainerWarning,
+            ]}
+          >
+            <View style={[styles.recordingDot, isLowTime && styles.recordingDotWarning]} />
+            <Text
               style={[
-                styles.countdownContainer,
-                isLowTime && styles.countdownContainerWarning,
-                { transform: [{ scale: timerAnim }] },
+                styles.countdownText,
+                isLowTime && styles.countdownTextWarning,
               ]}
             >
-              <View style={[styles.recordingDot, isLowTime && styles.recordingDotWarning]} />
-              <Text style={[styles.countdownText, isLowTime && styles.countdownTextWarning]}>
-                {formatTime(remainingSeconds)}
-              </Text>
-              <Text style={styles.countdownLabel}>remaining</Text>
-            </Animated.View>
+              {formatTime(remainingSeconds)}
+            </Text>
+            <Text style={styles.countdownLabel}>remaining</Text>
+          </View>
 
-            <Text style={styles.hostNameInCall}>{hostName}</Text>
+          <Text style={styles.hostName}>{hostDisplayName}</Text>
 
-            {/* Rate Information */}
-            <View style={styles.rateInfo}>
-              <Text style={styles.costText}>
-                {currentCallType === 'video' ? '60' : costPerMin} coins/min • {currentCallType.toUpperCase()}
-              </Text>
-            </View>
+          <View style={styles.rateInfo}>
+            <Text style={styles.rateText}>
+              💰 {currentRate} coins/min • {currentCallType.toUpperCase()}
+            </Text>
+          </View>
 
-            {/* Low Time Warning */}
-            {isLowTime && (
-              <View style={styles.warningBadge}>
-                <Ionicons name="warning" size={16} color={Colors.warning} />
-                <Text style={styles.warningText}>Low balance! Add coins to continue</Text>
-              </View>
-            )}
-          </Animated.View>
-
-          {/* Add Coins Button (when low time) */}
           {isLowTime && (
-            <Animated.View style={[styles.rechargeButtonContainer, { opacity: fadeAnim }]}>
-              <TouchableOpacity
-                style={styles.rechargeButton}
-                onPress={handleRecharge}
-                activeOpacity={0.8}
-              >
-                <Ionicons name="wallet" size={20} color={Colors.white} />
-                <Text style={styles.rechargeButtonText}>Add Coins</Text>
-              </TouchableOpacity>
-            </Animated.View>
+            <View style={styles.warningBadge}>
+              <Ionicons name="warning" size={16} color={Colors.warning} />
+              <Text style={styles.warningText}>Low balance! Add coins to continue</Text>
+            </View>
+          )}
+        </View>
+
+        <View style={styles.bottomPanel}>
+          {isLowTime && (
+            <TouchableOpacity
+              style={styles.rechargeButton}
+              onPress={handleRecharge}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="wallet" size={18} color={Colors.background} />
+              <Text style={styles.rechargeButtonText}>Add Coins</Text>
+            </TouchableOpacity>
           )}
 
-          {/* Control Panel */}
-          <Animated.View style={[styles.controlPanel, { opacity: fadeAnim }]}>
-            {/* Mute Button */}
+          <View style={styles.controlPanel}>
             <TouchableOpacity
               style={[styles.controlButton, isMuted && styles.controlButtonActive]}
-              onPress={() => setIsMuted(!isMuted)}
-              activeOpacity={0.7}
+              onPress={handleToggleMute}
+              activeOpacity={0.8}
             >
               <Ionicons
                 name={isMuted ? 'mic-off' : 'mic'}
-                size={28}
-                color={isMuted ? Colors.secondary : Colors.white}
+                size={22}
+                color={Colors.white}
               />
             </TouchableOpacity>
 
-            {/* Switch to Video Button (only for audio calls) */}
-            {currentCallType === 'audio' && (
-              <TouchableOpacity
-                style={[
-                  styles.controlButton,
-                  styles.upgradeButton,
-                  (upgradeRequestState !== 'idle' || upgradeAttempts >= 3) && styles.upgradeButtonDisabled,
-                ]}
-                onPress={handleUpgradeToVideo}
-                disabled={upgradeRequestState !== 'idle' || upgradeAttempts >= 3}
-                activeOpacity={0.7}
-              >
-                {upgradeRequestState === 'sending' || upgradeRequestState === 'pending' ? (
-                  <View style={styles.upgradeButtonContent}>
-                    <Ionicons name="hourglass" size={24} color={Colors.white} />
-                    <Text style={styles.upgradeButtonLabel}>
-                      {upgradeRequestState === 'sending' ? 'Sending...' : 'Pending'}
-                    </Text>
-                  </View>
-                ) : (
-                  <View style={styles.upgradeButtonContent}>
-                    <Ionicons
-                      name="videocam"
-                      size={24}
-                      color={upgradeAttempts >= 3 ? Colors.text.secondary : Colors.accent}
-                    />
-                    <Ionicons
-                      name="add-circle"
-                      size={16}
-                      color={upgradeAttempts >= 3 ? Colors.text.secondary : Colors.accent}
-                      style={styles.upgradeIcon}
-                    />
-                  </View>
-                )}
-              </TouchableOpacity>
-            )}
+            <TouchableOpacity
+              style={[
+                styles.controlButton,
+                currentCallType === 'video' && styles.controlButtonActive,
+              ]}
+              onPress={handleToggleVideo}
+              activeOpacity={0.8}
+            >
+              <Ionicons
+                name={currentCallType === 'video' ? 'videocam' : 'videocam-outline'}
+                size={22}
+                color={Colors.white}
+              />
+            </TouchableOpacity>
 
-            {/* End Call Button */}
+            <TouchableOpacity
+              style={styles.controlButton}
+              onPress={handleFlipCamera}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="camera-reverse" size={22} color={Colors.white} />
+            </TouchableOpacity>
+
             <TouchableOpacity
               style={styles.endCallButton}
               onPress={handleEndCall}
               activeOpacity={0.8}
             >
-              <Ionicons name="call" size={32} color={Colors.white} />
+              <Ionicons name="call" size={22} color={Colors.white} />
             </TouchableOpacity>
-
-            {/* Camera Switch Button (only for video calls) */}
-            {currentCallType === 'video' && (
-              <TouchableOpacity
-                style={[styles.controlButton, cameraFlipped && styles.controlButtonActive]}
-                onPress={() => setCameraFlipped(!cameraFlipped)}
-                activeOpacity={0.7}
-              >
-                <Ionicons
-                  name="camera-reverse"
-                  size={28}
-                  color={cameraFlipped ? Colors.accent : Colors.white}
-                />
-              </TouchableOpacity>
-            )}
-
-            {/* Add Coins Button */}
-            {!isLowTime && (
-              <TouchableOpacity
-                style={[styles.controlButton, styles.addCoinsButton]}
-                onPress={handleRecharge}
-                activeOpacity={0.7}
-              >
-                <Ionicons name="add-circle" size={28} color={Colors.white} />
-              </TouchableOpacity>
-            )}
-          </Animated.View>
+          </View>
         </View>
-      </ImageBackground>
+      </View>
     </SafeAreaView>
   );
 }
@@ -486,279 +744,238 @@ export default function CallingScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.primary,
+    backgroundColor: Colors.background,
   },
-  ringingContainer: {
+  mediaContainer: {
     flex: 1,
+    position: 'relative',
+    backgroundColor: '#000',
+  },
+  audioBackground: {
+    ...StyleSheet.absoluteFillObject,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: Colors.primary,
   },
-  ringingProfilePicture: {
+  audioOverlay: {
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 28,
+    paddingVertical: 32,
+    borderRadius: 32,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  audioImage: {
     width: 180,
     height: 180,
     borderRadius: 90,
-    backgroundColor: Colors.border,
     borderWidth: 4,
-    borderColor: Colors.accent,
-    marginBottom: 32,
+    borderColor: Colors.border,
   },
-  ringingName: {
-    fontSize: FontSizes['3xl'],
-    fontWeight: '700',
-    color: Colors.white,
-    marginBottom: 8,
-  },
-  ringingStatus: {
-    fontSize: FontSizes.lg,
-    color: Colors.white,
-    opacity: 0.8,
-    marginBottom: 24,
-  },
-  ringingDots: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  dot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: Colors.accent,
-  },
-  dotAnimated: {
-    opacity: 0.6,
-  },
-  videoBackground: {
-    flex: 1,
-  },
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.4)',
-    justifyContent: 'space-between',
-  },
-  reconnectionOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.9)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 1000,
-  },
-  reconnectionCard: {
-    backgroundColor: Colors.surface,
-    borderRadius: 20,
-    padding: 32,
-    alignItems: 'center',
-    maxWidth: 300,
-    borderWidth: 2,
-    borderColor: Colors.warning,
-  },
-  reconnectionTitle: {
+  audioLabel: {
+    marginTop: 12,
     fontSize: FontSizes.xl,
     fontWeight: '700',
     color: Colors.white,
-    marginTop: 16,
-    marginBottom: 8,
+  },
+  audioSubtitle: {
+    fontSize: FontSizes.sm,
+    color: Colors.text.secondary,
+  },
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'space-between',
+    paddingHorizontal: 24,
+    paddingVertical: 32,
+  },
+  topBar: {
+    alignItems: 'center',
+    gap: 12,
+  },
+  countdownContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    paddingHorizontal: 22,
+    paddingVertical: 12,
+    borderRadius: 999,
+  },
+  countdownContainerWarning: {
+    backgroundColor: 'rgba(255,107,107,0.25)',
+  },
+  recordingDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: Colors.success,
+  },
+  recordingDotWarning: {
+    backgroundColor: Colors.error,
+  },
+  countdownText: {
+    fontSize: FontSizes['2xl'],
+    fontWeight: '700',
+    color: Colors.white,
+  },
+  countdownTextWarning: {
+    color: Colors.error,
+  },
+  countdownLabel: {
+    fontSize: FontSizes.sm,
+    color: Colors.text.secondary,
+  },
+  hostName: {
+    fontSize: FontSizes.xl,
+    fontWeight: '700',
+    color: Colors.white,
+    textAlign: 'center',
+  },
+  rateInfo: {
+    paddingHorizontal: 18,
+    paddingVertical: 8,
+    borderRadius: 18,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+  },
+  rateText: {
+    fontSize: FontSizes.sm,
+    color: Colors.text.secondary,
+  },
+  warningBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(255,184,0,0.18)',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 18,
+  },
+  warningText: {
+    fontSize: FontSizes.sm,
+    color: Colors.warning,
+    fontWeight: '600',
+  },
+  bottomPanel: {
+    alignItems: 'center',
+    gap: 16,
+  },
+  rechargeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: Colors.secondary,
+    paddingHorizontal: 22,
+    paddingVertical: 10,
+    borderRadius: 999,
+  },
+  rechargeButtonText: {
+    fontSize: FontSizes.base,
+    fontWeight: '700',
+    color: Colors.background,
+  },
+  controlPanel: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
+  },
+  controlButton: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  controlButtonActive: {
+    backgroundColor: Colors.primary,
+  },
+  endCallButton: {
+    width: 66,
+    height: 66,
+    borderRadius: 33,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: Colors.error,
+  },
+  reconnectionOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    paddingHorizontal: 24,
+  },
+  reconnectionCard: {
+    width: '85%',
+    maxWidth: 320,
+    borderRadius: 24,
+    padding: 24,
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: Colors.surface,
+  },
+  reconnectionTitle: {
+    fontSize: FontSizes.lg,
+    fontWeight: '700',
+    color: Colors.white,
   },
   reconnectionText: {
-    fontSize: FontSizes.lg,
-    fontWeight: '600',
-    color: Colors.warning,
-    marginBottom: 8,
+    fontSize: FontSizes.base,
+    color: Colors.text.secondary,
   },
   reconnectionHint: {
     fontSize: FontSizes.sm,
     color: Colors.text.secondary,
     textAlign: 'center',
   },
-  topBar: {
-    paddingTop: 48,
-    paddingHorizontal: 24,
-    paddingBottom: 24,
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    gap: 12,
   },
-  countdownContainer: {
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-    paddingHorizontal: 32,
-    paddingVertical: 20,
+  loadingText: {
+    fontSize: FontSizes.base,
+    color: Colors.white,
+  },
+  errorContainer: {
+    flex: 1,
+    backgroundColor: Colors.background,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 32,
+  },
+  errorCard: {
+    width: '100%',
+    maxWidth: 360,
     borderRadius: 24,
-    marginBottom: 16,
+    padding: 24,
     alignItems: 'center',
-    borderWidth: 3,
-    borderColor: Colors.accent,
-    shadowColor: Colors.accent,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 8,
-    elevation: 8,
+    gap: 16,
+    backgroundColor: Colors.surface,
   },
-  countdownContainerWarning: {
-    backgroundColor: 'rgba(255, 184, 0, 0.25)',
-    borderColor: Colors.warning,
-    shadowColor: Colors.warning,
-  },
-  countdownText: {
-    fontSize: FontSizes['4xl'],
-    fontWeight: '800',
-    color: Colors.white,
-    letterSpacing: 2,
-    textShadowColor: 'rgba(0, 0, 0, 0.5)',
-    textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 4,
-  },
-  countdownTextWarning: {
-    color: Colors.warning,
-  },
-  countdownLabel: {
-    fontSize: FontSizes.xs,
-    fontWeight: '600',
-    color: Colors.white,
-    opacity: 0.7,
-    marginTop: 4,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-  },
-  recordingDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: Colors.secondary,
-    marginBottom: 8,
-  },
-  recordingDotWarning: {
-    backgroundColor: Colors.warning,
-  },
-  hostNameInCall: {
+  errorTitle: {
     fontSize: FontSizes.xl,
     fontWeight: '700',
     color: Colors.white,
-    marginBottom: 8,
   },
-  rateInfo: {
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 16,
-    marginBottom: 12,
-  },
-  costText: {
-    fontSize: FontSizes.sm,
-    fontWeight: '600',
-    color: Colors.white,
-    opacity: 0.9,
-  },
-  warningBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255, 184, 0, 0.25)',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 16,
-    gap: 8,
-    borderWidth: 2,
-    borderColor: Colors.warning,
-  },
-  warningText: {
-    fontSize: FontSizes.sm,
-    fontWeight: '700',
-    color: Colors.warning,
-  },
-  rechargeButtonContainer: {
-    position: 'absolute',
-    top: '45%',
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-    zIndex: 100,
-  },
-  rechargeButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.primary,
-    paddingHorizontal: 24,
-    paddingVertical: 14,
-    borderRadius: 30,
-    gap: 8,
-    shadowColor: Colors.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.5,
-    shadowRadius: 8,
-    elevation: 8,
-  },
-  rechargeButtonText: {
+  errorMessage: {
     fontSize: FontSizes.base,
-    fontWeight: '700',
-    color: Colors.white,
+    color: Colors.text.secondary,
+    textAlign: 'center',
   },
-  controlPanel: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingBottom: 48,
-    gap: 24,
+  errorButton: {
+    marginTop: 8,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 999,
+    backgroundColor: Colors.primary,
   },
-  controlButton: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: 'rgba(255, 255, 255, 0.3)',
-  },
-  controlButtonActive: {
-    backgroundColor: 'rgba(255, 255, 255, 0.3)',
-    borderColor: Colors.secondary,
-  },
-  addCoinsButton: {
-    backgroundColor: 'rgba(167, 125, 255, 0.3)',
-    borderColor: Colors.primary,
-  },
-  endCallButton: {
-    width: 70,
-    height: 70,
-    borderRadius: 35,
-    backgroundColor: Colors.secondary,
-    justifyContent: 'center',
-    alignItems: 'center',
-    transform: [{ rotate: '135deg' }],
-    shadowColor: Colors.secondary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.5,
-    shadowRadius: 8,
-    elevation: 8,
-  },
-  upgradeButton: {
-    backgroundColor: 'rgba(167, 125, 255, 0.25)',
-    borderColor: Colors.accent,
-    borderWidth: 2,
-    minWidth: 80,
-    height: 60,
-    paddingHorizontal: 12,
-  },
-  upgradeButtonDisabled: {
-    backgroundColor: 'rgba(100, 100, 100, 0.2)',
-    borderColor: Colors.text.secondary,
-    opacity: 0.5,
-  },
-  upgradeButtonContent: {
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  upgradeButtonLabel: {
-    fontSize: FontSizes.xs,
+  errorButtonText: {
+    fontSize: FontSizes.base,
     fontWeight: '600',
     color: Colors.white,
-    marginTop: 4,
-  },
-  upgradeIcon: {
-    position: 'absolute',
-    top: -4,
-    right: -4,
   },
 });

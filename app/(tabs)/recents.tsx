@@ -172,14 +172,18 @@ function CallHistoryItem({ call }: { call: CallWithHost }) {
 
   const handleAudioCall = () => {
     if (call.host?.isOnline) {
+      const callId = `call-${Date.now()}`;
       router.push({
         pathname: '/calling',
         params: {
+          callId,
           hostId: call.host.$id,
           hostName: call.host.name,
           hostPicture: call.host.profilePictureUrl,
           isVideo: '0',
           costPerMin: call.host.audioCostPerMin.toString(),
+          audioRate: call.host.audioCostPerMin.toString(),
+          videoRate: call.host.videoCostPerMin.toString(),
         },
       });
     }
@@ -187,14 +191,18 @@ function CallHistoryItem({ call }: { call: CallWithHost }) {
 
   const handleVideoCall = () => {
     if (call.host?.isOnline) {
+      const callId = `call-${Date.now()}`;
       router.push({
         pathname: '/calling',
         params: {
+          callId,
           hostId: call.host.$id,
           hostName: call.host.name,
           hostPicture: call.host.profilePictureUrl,
           isVideo: '1',
           costPerMin: call.host.videoCostPerMin.toString(),
+          audioRate: call.host.audioCostPerMin.toString(),
+          videoRate: call.host.videoCostPerMin.toString(),
         },
       });
     }
